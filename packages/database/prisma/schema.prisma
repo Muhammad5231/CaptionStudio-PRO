@@ -123,20 +123,21 @@ model User {
   twoFactorEnabled Boolean      @default(false)
   twoFactorSecret  String?
 
-  sessions         Session[]
-  oauthAccounts    OAuthAccount[]
-  workspaceMembers WorkspaceMember[]
-  subscriptions    Subscription[]
-  payments         Payment[]
-  invoices         Invoice[]
-  notifications    Notification[]
-  auditLogs        AuditLog[]
-  supportTickets   SupportTicket[]
-  usageLedgers     UsageLedger[]
-  createdTemplates Template[]   @relation("TemplateCreator")
+  sessions           Session[]
+  passwordResetTokens PasswordResetToken[]
+  oauthAccounts      OAuthAccount[]
+  workspaceMembers   WorkspaceMember[]
+  subscriptions      Subscription[]
+  payments           Payment[]
+  invoices           Invoice[]
+  notifications      Notification[]
+  auditLogs          AuditLog[]
+  supportTickets     SupportTicket[]
+  usageLedgers       UsageLedger[]
+  createdTemplates   Template[]   @relation("TemplateCreator")
 
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
 
   @@index([email])
   @@index([role])
@@ -154,6 +155,20 @@ model Session {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
 }
 
 model OAuthAccount {

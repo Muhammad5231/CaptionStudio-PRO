@@ -9,6 +9,13 @@ export interface IFFmpegService {
   probe(filePath: string): Promise<Record<string, unknown>>;
 }
 
+export class MediaProbeError extends Error {
+  constructor(message: string, public readonly cause?: unknown) {
+    super(message);
+    this.name = 'MediaProbeError';
+  }
+}
+
 /**
  * FFmpeg Command Builder and abstraction
  * Ensures FFmpeg commands are never scattered ad-hoc throughout the application
@@ -46,33 +53,11 @@ export class FFmpegService implements IFFmpegService {
         filePath,
       ]);
       return JSON.parse(stdout);
-    } catch {
-      // Graceful fallback for environments where ffprobe is not yet installed
-      return {
-        path: filePath,
-        probedWith: 'fallback',
-        format: {
-          format_name: 'mp4',
-          duration: '60.000',
-          size: '15000000',
-          bit_rate: '2000000',
-        },
-        streams: [
-          {
-            codec_type: 'video',
-            codec_name: 'h264',
-            width: 1920,
-            height: 1080,
-            r_frame_rate: '30/1',
-          },
-          {
-            codec_type: 'audio',
-            codec_name: 'aac',
-            channels: 2,
-            sample_rate: '48000',
-          },
-        ],
-      };
+    } catch (err: unknown) {
+      throw new MediaProbeError(
+        `Failed to probe media file '${filePath}'. The file may be corrupted, an unsupported container, or ffprobe execution failed.`,
+        err
+      );
     }
   }
 }

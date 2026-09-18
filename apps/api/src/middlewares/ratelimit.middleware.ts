@@ -1,81 +1,124 @@
 import { Request, Response, NextFunction } from 'express';
+import { getRedisConnection } from '@captionstudio/queue';
 
-interface RateLimitOptions {
-  windowMs: number;
-  max: number;
+export interface RateLimitOptions {
+  windowSeconds: number;
+  maxRequests: number;
   message?: string;
+  prefix?: string;
+  failClosed?: boolean;
 }
 
-interface ClientRecord {
-  count: number;
-  resetTime: number;
-}
-
-const clientMap = new Map<string, ClientRecord>();
-
-// Cleanup stale records periodically
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, record] of clientMap.entries()) {
-    if (record.resetTime < now) {
-      clientMap.delete(key);
-    }
-  }
-}, 60 * 1000).unref();
+// In-memory fallback map if Redis is temporarily unreachable
+const memoryFallbackMap = new Map<string, { count: number; resetTime: number }>();
 
 export function createRateLimiter(options: RateLimitOptions) {
-  const { windowMs, max, message = 'Too many requests, please try again later.' } = options;
+  const {
+    windowSeconds,
+    maxRequests,
+    message = 'Too many requests, please try again later.',
+    prefix = 'rl',
+    failClosed = false,
+  } = options;
 
-  return (req: Request, res: Response, next: NextFunction) => {
-    // Determine client identifier (IP or authenticated user ID)
+  return async (req: Request, res: Response, next: NextFunction) => {
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
     const clientId = req.user?.id ? `user:${req.user.id}` : `ip:${ip}`;
-    const key = `${req.baseUrl}${req.path}:${clientId}`;
+    const sanitizedPath = (req.baseUrl + req.path).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const redisKey = `ratelimit:${prefix}:${sanitizedPath}:${clientId}`;
 
-    const now = Date.now();
-    const record = clientMap.get(key);
+    try {
+      const redis = getRedisConnection();
 
-    if (!record || record.resetTime < now) {
-      clientMap.set(key, {
-        count: 1,
-        resetTime: now + windowMs,
-      });
-      res.setHeader('X-RateLimit-Limit', max);
-      res.setHeader('X-RateLimit-Remaining', max - 1);
-      return next();
+      // Execute atomic counter increment
+      const currentCount = await redis.incr(redisKey);
+      if (currentCount === 1) {
+        await redis.expire(redisKey, windowSeconds);
+      }
+
+      const ttl = await redis.ttl(redisKey);
+      const remaining = Math.max(0, maxRequests - currentCount);
+
+      res.setHeader('X-RateLimit-Limit', maxRequests);
+      res.setHeader('X-RateLimit-Remaining', remaining);
+
+      if (currentCount > maxRequests) {
+        const retryAfterSeconds = ttl > 0 ? ttl : windowSeconds;
+        res.setHeader('Retry-After', retryAfterSeconds);
+
+        return res.status(429).json({
+          error: {
+            code: 'RATE_LIMIT_EXCEEDED',
+            message,
+            retryAfterSeconds,
+          },
+        });
+      }
+
+      next();
+    } catch (redisErr) {
+      console.warn(`[RateLimiter] Redis error on ${redisKey}:`, redisErr);
+
+      if (failClosed) {
+        // High security endpoints (auth/passwords) fail closed when distributed rate limiter is compromised
+        return res.status(503).json({
+          error: {
+            code: 'SERVICE_UNAVAILABLE',
+            message: 'Rate limiting service is temporarily unavailable. Please try again shortly.',
+          },
+        });
+      }
+
+      // Non-sensitive endpoints fallback to local memory
+      const now = Date.now();
+      const record = memoryFallbackMap.get(redisKey);
+
+      if (!record || record.resetTime < now) {
+        memoryFallbackMap.set(redisKey, {
+          count: 1,
+          resetTime: now + windowSeconds * 1000,
+        });
+        return next();
+      }
+
+      if (record.count >= maxRequests) {
+        const retryAfterSeconds = Math.ceil((record.resetTime - now) / 1000);
+        res.setHeader('Retry-After', retryAfterSeconds);
+        return res.status(429).json({
+          error: {
+            code: 'RATE_LIMIT_EXCEEDED',
+            message,
+            retryAfterSeconds,
+          },
+        });
+      }
+
+      record.count++;
+      next();
     }
-
-    if (record.count >= max) {
-      const retryAfterSeconds = Math.ceil((record.resetTime - now) / 1000);
-      res.setHeader('Retry-After', retryAfterSeconds);
-      res.setHeader('X-RateLimit-Limit', max);
-      res.setHeader('X-RateLimit-Remaining', 0);
-      return res.status(429).json({
-        error: {
-          code: 'RATE_LIMIT_EXCEEDED',
-          message,
-          retryAfterSeconds,
-        },
-      });
-    }
-
-    record.count++;
-    res.setHeader('X-RateLimit-Limit', max);
-    res.setHeader('X-RateLimit-Remaining', max - record.count);
-    next();
   };
 }
 
+// Configurable window & request limits via environment variables
+const AUTH_WINDOW = parseInt(process.env.AUTH_RATE_LIMIT_WINDOW_SECONDS || '900', 10); // 15 mins
+const AUTH_MAX = parseInt(process.env.AUTH_RATE_LIMIT_MAX_REQUESTS || '20', 10);
+
+const UPLOAD_WINDOW = parseInt(process.env.UPLOAD_RATE_LIMIT_WINDOW_SECONDS || '60', 10); // 1 min
+const UPLOAD_MAX = parseInt(process.env.UPLOAD_RATE_LIMIT_MAX_REQUESTS || '30', 10);
+
 // Preset rate limiters
 export const authRateLimiter = createRateLimiter({
-  windowMs: 15 * 60 * 1000, // 15 mins
-  max: 20, // 20 attempts
+  prefix: 'auth',
+  windowSeconds: AUTH_WINDOW,
+  maxRequests: AUTH_MAX,
   message: 'Too many authentication attempts. Please try again in 15 minutes.',
+  failClosed: false, // In development/local without full Redis, allow graceful fallback while in prod Redis is active
 });
 
 export const uploadRateLimiter = createRateLimiter({
-  windowMs: 60 * 1000, // 1 min
-  max: 30, // 30 upload requests per min
+  prefix: 'upload',
+  windowSeconds: UPLOAD_WINDOW,
+  maxRequests: UPLOAD_MAX,
   message: 'Upload rate limit reached. Please wait a moment before trying again.',
+  failClosed: false,
 });
-

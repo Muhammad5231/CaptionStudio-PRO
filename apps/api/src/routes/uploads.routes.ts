@@ -144,9 +144,9 @@ uploadsRouter.post(
 
 /**
  * PUT /api/v1/uploads/storage/:key
- * Local development streaming upload receiver
+ * Local development streaming upload receiver (authenticated & workspace isolated)
  */
-uploadsRouter.put('/storage/:key(*)', async (req: Request, res: Response, next: NextFunction) => {
+uploadsRouter.put('/storage/:key(*)', authenticate, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const rawKey = req.params.key;
     if (!rawKey) {
@@ -154,9 +154,27 @@ uploadsRouter.put('/storage/:key(*)', async (req: Request, res: Response, next: 
     }
 
     const key = decodeURIComponent(rawKey);
-    // Prevent path traversal
-    if (key.includes('..')) {
-      return res.status(400).json({ error: { code: 'INVALID_PATH', message: 'Illegal path traversal attempt.' } });
+    const localUploadsPath = path.resolve(process.env.STORAGE_LOCAL_PATH || './uploads');
+    const safeFilePath = path.resolve(localUploadsPath, key);
+
+    // Strictly prevent directory path traversal
+    if (!safeFilePath.startsWith(localUploadsPath) || key.includes('..')) {
+      return res.status(403).json({ error: { code: 'INVALID_PATH', message: 'Illegal path traversal attempt.' } });
+    }
+
+    // Workspace tenancy verification from key path ("workspaces/{workspaceId}/projects/{projectId}/...")
+    const parts = key.split('/');
+    if (parts[0] === 'workspaces' && parts[1]) {
+      const workspaceId = parts[1];
+      const isMember = req.user!.workspaceMembers.some((m) => m.workspaceId === workspaceId);
+      if (!isMember && req.user!.role !== 'ADMIN' && req.user!.role !== 'SUPER_ADMIN') {
+        return res.status(403).json({
+          error: {
+            code: 'FORBIDDEN',
+            message: 'You do not have permission to upload files to this workspace.',
+          },
+        });
+      }
     }
 
     await storageProvider.upload(key, req, {
@@ -171,48 +189,96 @@ uploadsRouter.put('/storage/:key(*)', async (req: Request, res: Response, next: 
 
 /**
  * GET /api/v1/uploads/storage/:key
- * Serves local files with HTTP 206 Partial Content (Range requests) for smooth video playback
+ * Serves private local storage files with authentication, workspace authorization, and HTTP 206 Range requests
  */
-uploadsRouter.get('/storage/:key(*)', async (req: Request, res: Response, next: NextFunction) => {
+uploadsRouter.get('/storage/:key(*)', authenticate, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const rawKey = req.params.key;
     const key = decodeURIComponent(rawKey);
 
-    if (key.includes('..')) {
-      return res.status(400).json({ error: { code: 'INVALID_PATH', message: 'Illegal path traversal attempt.' } });
+    const localUploadsPath = path.resolve(process.env.STORAGE_LOCAL_PATH || './uploads');
+    const safeFilePath = path.resolve(localUploadsPath, key);
+
+    // Strictly prevent directory path traversal
+    if (!safeFilePath.startsWith(localUploadsPath) || key.includes('..')) {
+      return res.status(403).json({ error: { code: 'INVALID_PATH', message: 'Illegal path traversal attempt.' } });
     }
 
-    const localUploadsPath = path.resolve(process.env.STORAGE_LOCAL_PATH || './uploads');
-    const filePath = path.join(localUploadsPath, key);
-
-    if (!fs.existsSync(filePath)) {
+    if (!fs.existsSync(safeFilePath)) {
       return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'File not found in storage.' } });
     }
 
-    const stat = fs.statSync(filePath);
+    // Verify user authorization for this asset
+    const asset = await prisma.projectAsset.findFirst({
+      where: { storageKey: key },
+      include: {
+        project: {
+          select: { workspaceId: true },
+        },
+      },
+    });
+
+    if (asset) {
+      const isMember = req.user!.workspaceMembers.some(
+        (m) => m.workspaceId === asset.project.workspaceId
+      );
+      if (!isMember && req.user!.role !== 'ADMIN' && req.user!.role !== 'SUPER_ADMIN') {
+        return res.status(403).json({
+          error: {
+            code: 'FORBIDDEN',
+            message: 'You do not have access to this media asset.',
+          },
+        });
+      }
+    } else {
+      // If not yet committed to ProjectAsset, verify workspace path tenancy
+      const parts = key.split('/');
+      if (parts[0] === 'workspaces' && parts[1]) {
+        const workspaceId = parts[1];
+        const isMember = req.user!.workspaceMembers.some((m) => m.workspaceId === workspaceId);
+        if (!isMember && req.user!.role !== 'ADMIN' && req.user!.role !== 'SUPER_ADMIN') {
+          return res.status(403).json({
+            error: {
+              code: 'FORBIDDEN',
+              message: 'You do not have access to files in this workspace.',
+            },
+          });
+        }
+      }
+    }
+
+    const stat = fs.statSync(safeFilePath);
     const fileSize = stat.size;
     const range = req.headers.range;
+
+    const contentType = key.endsWith('.mp4')
+      ? 'video/mp4'
+      : key.endsWith('.webm')
+      ? 'video/webm'
+      : key.endsWith('.mov')
+      ? 'video/quicktime'
+      : 'application/octet-stream';
 
     if (range) {
       const parts = range.replace(/bytes=/, '').split('-');
       const start = parseInt(parts[0], 10);
       const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
       const chunksize = end - start + 1;
-      const fileStream = fs.createReadStream(filePath, { start, end });
+      const fileStream = fs.createReadStream(safeFilePath, { start, end });
 
       res.writeHead(206, {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
         'Accept-Ranges': 'bytes',
         'Content-Length': chunksize,
-        'Content-Type': key.endsWith('.mp4') ? 'video/mp4' : key.endsWith('.webm') ? 'video/webm' : 'application/octet-stream',
+        'Content-Type': contentType,
       });
       fileStream.pipe(res);
     } else {
       res.writeHead(200, {
         'Content-Length': fileSize,
-        'Content-Type': key.endsWith('.mp4') ? 'video/mp4' : key.endsWith('.webm') ? 'video/webm' : 'application/octet-stream',
+        'Content-Type': contentType,
       });
-      fs.createReadStream(filePath).pipe(res);
+      fs.createReadStream(safeFilePath).pipe(res);
     }
   } catch (err) {
     next(err);
@@ -324,7 +390,7 @@ uploadsRouter.post(
           },
         });
 
-        // Push to BullMQ queue
+        // Dispatch to BullMQ queue with reliable failure handling
         try {
           await addMediaAnalysisJob({
             jobId: job.id,
@@ -336,14 +402,35 @@ uploadsRouter.post(
             originalFileName: data.fileName,
             type: JobType.MEDIA_ANALYSIS,
           });
-        } catch (queueErr) {
-          console.warn('[Queue Warning] BullMQ job dispatch skipped (Redis may be offline):', queueErr);
-        }
 
-        await prisma.project.update({
-          where: { id: project.id },
-          data: { status: ProjectStatus.PROCESSING },
-        });
+          await prisma.project.update({
+            where: { id: project.id },
+            data: { status: ProjectStatus.PROCESSING },
+          });
+        } catch (queueErr: unknown) {
+          const errMsg = queueErr instanceof Error ? queueErr.message : 'Queue dispatch failed';
+          console.error('[Uploads:Complete] Queue dispatch failed:', errMsg);
+
+          await prisma.exportJob.update({
+            where: { id: job.id },
+            data: {
+              status: JobStatus.FAILED,
+              errorMessage: 'Failed to dispatch media analysis job. Redis queue broker may be offline.',
+              metadata: {
+                errorCode: 'QUEUE_DISPATCH_FAILED',
+                dispatchError: errMsg,
+                failedAt: new Date().toISOString(),
+              },
+            },
+          });
+
+          return res.status(503).json({
+            error: {
+              code: 'QUEUE_DISPATCH_FAILED',
+              message: 'Failed to enqueue media analysis. Please retry the operation in a moment.',
+            },
+          });
+        }
 
         return res.json({
           success: true,
@@ -367,6 +454,16 @@ uploadsRouter.post(
           timestamp: new Date().toISOString(),
         });
       } else {
+        // Enforce maximum subtitle file size (5MB)
+        if (data.fileSizeBytes > 5 * 1024 * 1024) {
+          return res.status(413).json({
+            error: {
+              code: 'PAYLOAD_TOO_LARGE',
+              message: 'Subtitle file exceeds maximum allowed limit of 5MB.',
+            },
+          });
+        }
+
         // Parse SUBTITLE file and normalize
         const buffer = await storageProvider.download(data.storageKey);
         const textContent = buffer.toString('utf-8');
@@ -374,12 +471,31 @@ uploadsRouter.post(
         let track;
         const ext = path.extname(data.fileName).toLowerCase();
 
-        if (ext === '.vtt') {
-          track = parseVTT(textContent);
-        } else if (ext === '.ass' || ext === '.ssa') {
-          track = parseASS(textContent);
-        } else {
-          track = parseSRT(textContent);
+        try {
+          if (ext === '.vtt') {
+            track = parseVTT(textContent);
+          } else if (ext === '.ass' || ext === '.ssa') {
+            track = parseASS(textContent);
+          } else {
+            track = parseSRT(textContent);
+          }
+        } catch (parseErr: unknown) {
+          const msg = parseErr instanceof Error ? parseErr.message : 'Malformed subtitle file';
+          return res.status(422).json({
+            error: {
+              code: 'INVALID_SUBTITLE_FORMAT',
+              message: `Failed to parse subtitle file: ${msg}`,
+            },
+          });
+        }
+
+        if (!track || track.length === 0) {
+          return res.status(422).json({
+            error: {
+              code: 'INVALID_SUBTITLE_FORMAT',
+              message: 'The uploaded file does not contain valid subtitle cues. Supported formats: SRT, VTT, ASS.',
+            },
+          });
         }
 
         const latestVersion = await prisma.projectVersion.findFirst({

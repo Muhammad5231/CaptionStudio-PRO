@@ -1,7 +1,13 @@
 import { CaptionLine, CaptionWord } from '@captionstudio/types';
 import { srtTimeToSeconds } from './srt';
 
+const MAX_SUBTITLE_STRING_LENGTH = 5 * 1024 * 1024; // 5MB
+
 export function parseVTT(vttContent: string): CaptionLine[] {
+  if (vttContent.length > MAX_SUBTITLE_STRING_LENGTH) {
+    throw new Error('Subtitle file exceeds maximum allowed text limit of 5MB.');
+  }
+
   const normalized = vttContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
   if (!normalized.startsWith('WEBVTT')) {
     // Attempt fallback or parse anyway

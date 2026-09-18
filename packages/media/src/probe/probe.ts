@@ -30,28 +30,41 @@ export class MediaProbeService implements IMediaProbeService {
     const videoStream = raw.streams?.find((s) => s.codec_type === 'video');
     const audioStream = raw.streams?.find((s) => s.codec_type === 'audio');
 
+    if (!videoStream) {
+      throw new Error('Invalid media: No video stream detected in container.');
+    }
+
+    if (!videoStream.width || !videoStream.height) {
+      throw new Error('Invalid media: Video stream missing valid width or height dimensions.');
+    }
+
     let fps = 30;
     if (videoStream?.r_frame_rate) {
       const [num, den] = videoStream.r_frame_rate.split('/').map(Number);
-      if (num && den) fps = Math.round(num / den);
+      if (num && den && den > 0) fps = Math.round(num / den);
     }
 
-    const durationSeconds = raw.format?.duration ? parseFloat(raw.format.duration) : 60;
-    const sizeBytes = raw.format?.size ? parseInt(raw.format.size, 10) : 15_000_000;
-    const bitrateKbps = raw.format?.bit_rate ? Math.round(parseInt(raw.format.bit_rate, 10) / 1000) : 2000;
+    const durationRaw = raw.format?.duration || (videoStream as { duration?: string }).duration;
+    if (!durationRaw || isNaN(parseFloat(durationRaw)) || parseFloat(durationRaw) <= 0) {
+      throw new Error('Invalid media: Media container missing valid duration.');
+    }
+    const durationSeconds = parseFloat(durationRaw);
+
+    const sizeBytes = raw.format?.size ? parseInt(raw.format.size, 10) : 0;
+    const bitrateKbps = raw.format?.bit_rate ? Math.round(parseInt(raw.format.bit_rate, 10) / 1000) : 0;
 
     return {
-      format: raw.format?.format_name?.split(',')[0] || 'mp4',
+      format: raw.format?.format_name?.split(',')[0] || 'unknown',
       durationSeconds,
       sizeBytes,
       bitrateKbps,
-      width: videoStream?.width || 1920,
-      height: videoStream?.height || 1080,
-      fps,
-      videoCodec: videoStream?.codec_name || 'h264',
-      audioCodec: audioStream?.codec_name || 'aac',
-      audioChannels: audioStream?.channels || 2,
-      audioSampleRate: audioStream?.sample_rate ? parseInt(audioStream.sample_rate, 10) : 48000,
+      width: videoStream.width,
+      height: videoStream.height,
+      fps: fps || 30,
+      videoCodec: videoStream.codec_name || 'unknown',
+      audioCodec: audioStream?.codec_name || 'none',
+      audioChannels: audioStream?.channels || 0,
+      audioSampleRate: audioStream?.sample_rate ? parseInt(audioStream.sample_rate, 10) : 0,
       hasAudio: Boolean(audioStream),
     };
   }

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import {
   Plus,
   Search,
@@ -43,7 +43,6 @@ interface ProjectItem {
 
 export default function ProjectsPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { workspace } = useAuth();
 
   const [projects, setProjects] = useState<ProjectItem[]>([]);
@@ -106,10 +105,13 @@ export default function ProjectsPage() {
 
   // Check URL query for new=true
   useEffect(() => {
-    if (searchParams?.get('new') === 'true') {
-      setIsNewProjectModalOpen(true);
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('new') === 'true') {
+        setIsNewProjectModalOpen(true);
+      }
     }
-  }, [searchParams]);
+  }, []);
 
   const handleCreateProject = async () => {
     if (!projectName.trim()) return;

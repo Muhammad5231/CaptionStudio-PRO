@@ -18,10 +18,12 @@
     "db:seed": "pnpm --filter @captionstudio/database db:seed"
   },
   "devDependencies": {
+    "@types/node": "^22.20.3",
     "prettier": "^3.3.3",
     "tsx": "^4.19.1",
     "turbo": "^2.1.2",
-    "typescript": "^5.6.2"
+    "typescript": "^5.6.2",
+    "zod": "^3.25.76"
   },
   "packageManager": "pnpm@11.25.0",
   "engines": {

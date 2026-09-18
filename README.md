@@ -177,15 +177,60 @@ pnpm typecheck
 
 ---
 
-## Platform Engineering Roadmap (Phases 1 – 9)
+---
 
-- [x] **Phase 1: Foundation & SaaS Shell**: Design system, Next.js 14 layout, Prisma schema, Turborepo architecture.
-- [x] **Phase 2: Production Backend, Auth, Projects & Uploads**: PostgreSQL DB integration, scrypt auth & session cookies, workspace RBAC, project CRUD, S3/local storage abstraction, BullMQ media analysis worker (`captionstudio-media-analysis`), subtitle parser (SRT/VTT/ASS), SSE real-time updates.
-- [ ] **Phase 3: AI Speech-to-Text Engine**: Self-hosted Whisper STT worker container, word-level alignment, speaker diarization, audio denoiser.
-- [ ] **Phase 4: Timeline & Caption Editor**: Full multi-track video timeline editor, split/merge hotkeys, waveform visualizer.
-- [ ] **Phase 5: Caption Design & Kinetic Typography**: Advanced kinetic typography rendering engine with bezier spring curves and particle highlights.
-- [ ] **Phase 6: High-Performance Video Rendering Engine**: High-throughput GPU FFmpeg subtitle burning cluster (4K 60 FPS, ProRes, WebM, MP4).
-- [ ] **Phase 7: Production Stripe Billing**: Subscriptions, usage meter webhooks, and Stripe Customer Portal.
-- [ ] **Phase 8: Super Admin & Team Collaboration**: Cluster monitoring, user impersonation, and team seat management.
-- [ ] **Phase 9: Production Hardening, Edge CDN & Observability**: Global CDN edge distribution, Prometheus/Grafana observability, and SOC2 audit compliance.
+## Phase 2 Status & Hardening Summary
+
+### Implemented
+- **Real PostgreSQL Database**: Production connection and 22 relational models managed with Prisma ORM.
+- **Real Authentication & Sessions**: Native `crypto.scrypt` password hashing, timing-safe equality, 32-byte cryptographically secure session rotation.
+- **HTTP-Only Cookies**: Protected `cs_session` cookies (`SameSite=Lax`, `Secure`, `HttpOnly`).
+- **Workspace Isolation & RBAC**: Tenant isolation with `OWNER`, `ADMIN`, `EDITOR`, and `VIEWER` roles.
+- **Project CRUD & IDOR Guard**: Project creation, listing, duplicate, archive, delete, and IDOR prevention middleware.
+- **Upload Architecture**: Direct signed upload URLs, multi-tenant path isolation (`workspaces/{wId}/projects/{pId}/{type}/{fileId}.{ext}`).
+- **Pluggable Storage Abstraction**: `LocalStorageProvider` (dev/self-hosted) and `S3StorageProvider` (AWS S3, MinIO, Cloudflare R2).
+- **BullMQ Queue Infrastructure**: Redis-backed queues (`captionstudio-media-analysis`, `captionstudio-transcription`, `captionstudio-export`).
+- **Server-Sent Events (SSE)**: Real-time progress updates on `/api/v1/jobs/:id/events` with connection teardown on terminal states.
+- **Subtitle Parsing Engine**: Defensive parsers for SRT, WebVTT, and ASS formats with word-level interpolation.
+- **Audit Logging**: Non-blocking asynchronous security and resource action logging.
+
+### Hardened (Critical Production Fixes)
+- **Real Password Reset**:
+  - `PasswordResetToken` table with single-use enforcement, 30-minute expiration, and SHA-256 token hashing.
+  - Zero raw token exposure in database.
+  - Generic `/forgot-password` response prevents user enumeration.
+  - Revokes all active user sessions upon successful password reset.
+  - `EmailService` abstraction supporting console in development and configurable SMTP/API in production.
+- **Zero Fake FFprobe Fallback**:
+  - Removed all fabricated fallback metadata (`1920x1080 30fps 60s`).
+  - Corrupted media or probe failure cleanly fails the job with `MEDIA_PROBE_FAILED` and user-friendly diagnostics.
+  - True stream validation verifies video stream existence, positive width/height, and container duration.
+- **Authorized Local Storage Downloads**:
+  - `GET /api/v1/uploads/storage/:key` is strictly authenticated.
+  - Database asset lookup ensures the requesting user belongs to the project's workspace.
+  - Canonical path resolution blocks all directory traversal attempts (`..`).
+- **Distributed Redis Rate Limiting**:
+  - Replaced in-memory map with Redis-backed atomic increment rate limiting.
+  - Configurable windows and thresholds for authentication and upload endpoints.
+  - Graceful fallback protects against cascading failures.
+- **Session Token Leakage Prevention**:
+  - Removed raw `token` from `/signup` and `/login` JSON responses; browser auth relies purely on secure HTTP-only cookies.
+- **Reliable Queue Dispatch**:
+  - Upload completion safely traps queue dispatch errors, records `QUEUE_DISPATCH_FAILED`, and resets project status instead of leaving jobs silently stuck in `PENDING`.
+- **Real Admin Metrics & Actions**:
+  - Completely eradicated fake data (`mrrUsd = 14500`, `storageUsedBytes = 4200000000000`, `plan = PRO`, `projectsCount = 5`).
+  - Queries actual database counts, real storage aggregates, real job status distributions, and marks billing metrics as `NOT_IMPLEMENTED`.
+  - Admin status updates validated via Zod enum, prevents self-suspension, revokes sessions on suspension, and logs audit events.
+- **Defensive Subtitle Resource Limits**:
+  - Enforced 5MB max text limits, 10,000 maximum cues, and 2,000 character line length guards.
+
+### Not Yet Implemented (Deferred to Future Phases)
+- **Phase 3**: Whisper AI STT worker container, word-level alignment, speaker diarization, audio denoiser.
+- **Phase 4**: Multi-track video timeline editor, split/merge hotkeys, waveform visualizer.
+- **Phase 5**: Kinetic typography rendering engine with bezier spring curves and particle highlights.
+- **Phase 6**: High-throughput GPU FFmpeg subtitle burning cluster (4K 60 FPS, ProRes, WebM, MP4).
+- **Phase 7**: Production Stripe billing integration with webhooks and customer portal.
+- **Phase 8**: Super Admin cluster monitoring, user impersonation, and team seat management.
+- **Phase 9**: Global CDN edge distribution, observability (Prometheus/Grafana), and SOC2 audit compliance.
+
 

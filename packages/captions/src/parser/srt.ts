@@ -15,17 +15,26 @@ export function srtTimeToSeconds(timeStr: string): number {
   return hours * 3600 + minutes * 60 + seconds + ms / 1000;
 }
 
+const MAX_SUBTITLE_STRING_LENGTH = 5 * 1024 * 1024; // 5MB
+const MAX_CUES_LIMIT = 10_000;
+const MAX_LINE_CHAR_LENGTH = 2_000;
+
 /**
  * Parses raw SRT subtitle content into structured CaptionLine[]
  */
 export function parseSRT(srtContent: string): CaptionLine[] {
+  if (srtContent.length > MAX_SUBTITLE_STRING_LENGTH) {
+    throw new Error('Subtitle file exceeds maximum allowed text limit of 5MB.');
+  }
+
   const normalized = srtContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
   if (!normalized) return [];
 
   const blocks = normalized.split(/\n\n+/);
   const captions: CaptionLine[] = [];
+  const maxBlocks = Math.min(blocks.length, MAX_CUES_LIMIT);
 
-  for (let i = 0; i < blocks.length; i++) {
+  for (let i = 0; i < maxBlocks; i++) {
     const lines = blocks[i].split('\n').map((l) => l.trim()).filter(Boolean);
     if (lines.length < 2) continue;
 

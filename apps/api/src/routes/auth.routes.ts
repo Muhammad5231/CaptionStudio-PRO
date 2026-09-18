@@ -5,12 +5,15 @@ import {
   hashPassword,
   verifyPassword,
   generateSessionToken,
+  generateResetToken,
+  hashResetToken,
   getExpressCookieOptions,
   AUTH_COOKIE_NAME,
 } from '@captionstudio/auth';
 import { authenticate } from '../middlewares/auth.middleware';
 import { authRateLimiter } from '../middlewares/ratelimit.middleware';
 import { recordAuditLog } from '../services/audit.service';
+import { emailService } from '../services/email.service';
 
 export const authRouter = Router();
 
@@ -121,7 +124,6 @@ authRouter.post('/signup', authRateLimiter, async (req, res, next) => {
           slug: result.workspace.slug,
           role: result.member.role,
         },
-        token: sessionToken,
       },
       message: 'Account created successfully.',
       timestamp: new Date().toISOString(),
@@ -212,7 +214,6 @@ authRouter.post('/login', authRateLimiter, async (req, res, next) => {
               role: activeWorkspace.role,
             }
           : null,
-        token: sessionToken,
       },
       timestamp: new Date().toISOString(),
     });
@@ -285,7 +286,7 @@ authRouter.get('/me', authenticate, async (req, res) => {
 
 /**
  * POST /api/v1/auth/forgot-password
- * Triggers password reset email flow.
+ * Triggers password reset email flow with secure hashed tokens.
  */
 authRouter.post('/forgot-password', authRateLimiter, async (req, res, next) => {
   try {
@@ -299,11 +300,34 @@ authRouter.post('/forgot-password', authRateLimiter, async (req, res, next) => {
       });
     }
 
+    const normalizedEmail = email.toLowerCase().trim();
     const user = await prisma.user.findUnique({
-      where: { email: email.toLowerCase().trim() },
+      where: { email: normalizedEmail },
     });
 
     if (user) {
+      // Invalidate existing unused tokens for this user
+      await prisma.passwordResetToken.deleteMany({
+        where: { userId: user.id, usedAt: null },
+      });
+
+      const rawToken = generateResetToken();
+      const tokenHash = hashResetToken(rawToken);
+      const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes TTL
+
+      await prisma.passwordResetToken.create({
+        data: {
+          userId: user.id,
+          tokenHash,
+          expiresAt,
+        },
+      });
+
+      const appBaseUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+      const resetUrl = `${appBaseUrl}/reset-password?token=${rawToken}`;
+
+      await emailService.sendPasswordResetEmail(user.email, resetUrl);
+
       await recordAuditLog({
         userId: user.id,
         action: 'PASSWORD_RESET_REQUESTED',
@@ -312,7 +336,7 @@ authRouter.post('/forgot-password', authRateLimiter, async (req, res, next) => {
       });
     }
 
-    // Always respond with success to prevent user enumeration
+    // Always respond with identical generic response to prevent user enumeration
     res.json({
       success: true,
       message: 'If an account exists with this email, password reset instructions have been sent.',
@@ -325,7 +349,7 @@ authRouter.post('/forgot-password', authRateLimiter, async (req, res, next) => {
 
 /**
  * POST /api/v1/auth/reset-password
- * Resets password using verification token.
+ * Resets password using verification token, invalidates existing sessions, and audits the event.
  */
 authRouter.post('/reset-password', authRateLimiter, async (req, res, next) => {
   try {
@@ -334,18 +358,65 @@ authRouter.post('/reset-password', authRateLimiter, async (req, res, next) => {
       return res.status(400).json({
         error: {
           code: 'INVALID_REQUEST',
-          message: 'Token and new password (min 8 chars) are required.',
+          message: 'Token and new password (min 8 characters) are required.',
         },
       });
     }
 
-    // Architecture: verify reset token and update password hash
+    const tokenHash = hashResetToken(token);
+    const resetRecord = await prisma.passwordResetToken.findUnique({
+      where: { tokenHash },
+      include: { user: true },
+    });
+
+    // Check if token exists, hasn't been used, and hasn't expired
+    if (!resetRecord || resetRecord.usedAt !== null || resetRecord.expiresAt < new Date()) {
+      return res.status(400).json({
+        error: {
+          code: 'INVALID_OR_EXPIRED_TOKEN',
+          message: 'Password reset link is invalid or has expired. Please request a new one.',
+        },
+      });
+    }
+
+    const newPasswordHash = await hashPassword(newPassword);
+
+    // Atomic transaction: Update password, revoke ALL existing sessions, mark token used
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: resetRecord.userId },
+        data: { passwordHash: newPasswordHash },
+      });
+
+      await tx.session.deleteMany({
+        where: { userId: resetRecord.userId },
+      });
+
+      await tx.passwordResetToken.update({
+        where: { id: resetRecord.id },
+        data: { usedAt: new Date() },
+      });
+    });
+
+    await recordAuditLog({
+      userId: resetRecord.userId,
+      action: 'PASSWORD_RESET_SUCCESS',
+      resource: `User:${resetRecord.userId}`,
+      ipAddress: req.ip,
+    });
+
+    await emailService.sendSecurityNotification(
+      resetRecord.user.email,
+      'Your CaptionStudio PRO account password was recently changed. If you did not make this change, please contact security immediately.'
+    );
+
     res.json({
       success: true,
-      message: 'Password has been successfully updated. You may now log in.',
+      message: 'Password has been successfully updated. You may now log in with your new password.',
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
     next(err);
   }
 });
+

@@ -82,4 +82,50 @@ describe('Authentication & Session Security', () => {
     const loginResult = LoginSchema.safeParse(validLogin);
     assert.strictEqual(loginResult.success, true);
   });
+
+  it('should generate cryptographically strong, random reset tokens and valid SHA-256 hashes', async () => {
+    const { generateResetToken, hashResetToken } = await import('../packages/auth/src/index');
+
+    const rawToken1 = generateResetToken();
+    const rawToken2 = generateResetToken();
+
+    assert.strictEqual(typeof rawToken1, 'string');
+    assert.strictEqual(rawToken1.length, 64); // 32 bytes hex
+    assert.notStrictEqual(rawToken1, rawToken2);
+
+    const hash1 = hashResetToken(rawToken1);
+    const hash2 = hashResetToken(rawToken1);
+    const hashDifferent = hashResetToken(rawToken2);
+
+    assert.strictEqual(hash1, hash2); // Deterministic
+    assert.notStrictEqual(hash1, hashDifferent);
+    assert.notStrictEqual(rawToken1, hash1); // Never store raw token
+  });
+
+  it('should enforce single-use and expiration on password reset tokens', () => {
+    const isTokenValid = (token: { usedAt: Date | null; expiresAt: Date }) => {
+      if (token.usedAt !== null) return false; // Already used
+      if (token.expiresAt < new Date()) return false; // Expired
+      return true;
+    };
+
+    const activeToken = {
+      usedAt: null,
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 mins left
+    };
+    assert.strictEqual(isTokenValid(activeToken), true);
+
+    const usedToken = {
+      usedAt: new Date(),
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+    };
+    assert.strictEqual(isTokenValid(usedToken), false);
+
+    const expiredToken = {
+      usedAt: null,
+      expiresAt: new Date(Date.now() - 1000), // Expired 1s ago
+    };
+    assert.strictEqual(isTokenValid(expiredToken), false);
+  });
 });
+

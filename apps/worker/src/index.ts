@@ -11,7 +11,7 @@ import {
   ExportJobData,
   MediaAnalysisJobData,
 } from '@captionstudio/queue';
-import { prisma, JobStatus, ProjectStatus } from '@captionstudio/database';
+import { prisma, Prisma, JobStatus, ProjectStatus } from '@captionstudio/database';
 import { createStorageProvider } from '@captionstudio/storage';
 import { FFmpegService, MediaProbeService } from '@captionstudio/media';
 
@@ -48,6 +48,7 @@ async function updateJobState(
     progress?: number;
     stage?: string;
     errorMessage?: string | null;
+    metadata?: Prisma.InputJsonValue;
     completedAt?: Date;
     startedAt?: Date;
   }
@@ -154,7 +155,12 @@ const mediaAnalysisWorker = new Worker<MediaAnalysisJobData>(
 
       await updateJobState(jobId, {
         status: JobStatus.FAILED,
-        errorMessage: 'Media analysis failed. Video stream may be corrupted or unsupported.',
+        errorMessage: "We couldn't analyze this media file. Please verify that the file is valid and try again.",
+        metadata: {
+          errorCode: 'MEDIA_PROBE_FAILED',
+          errorDetails: message,
+          failedAt: new Date().toISOString(),
+        },
       });
 
       await prisma.project.update({

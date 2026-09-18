@@ -1,0 +1,11 @@
+{
+  "extends": "./packages/config/tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"]
+  },
+  "include": ["tests/**/*", "packages/*/src/**/*", "apps/*/src/**/*"],
+  "exclude": ["node_modules", "dist", ".next"]
+}
+

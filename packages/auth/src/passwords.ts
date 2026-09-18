@@ -9,7 +9,7 @@ const SALT_LENGTH = 16;
 export async function hashPassword(password: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const salt = crypto.randomBytes(SALT_LENGTH).toString('hex');
-    crypto.scrypt(password, salt, KEY_LENGTH, (err, derivedKey) => {
+    crypto.scrypt(password, salt, KEY_LENGTH, (err: Error | null, derivedKey: Buffer) => {
       if (err) return reject(err);
       resolve(`${salt}:${derivedKey.toString('hex')}`);
     });
@@ -27,10 +27,25 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
     const [salt, key] = parts;
     const keyBuffer = Buffer.from(key, 'hex');
 
-    crypto.scrypt(password, salt, KEY_LENGTH, (err, derivedKey) => {
+    crypto.scrypt(password, salt, KEY_LENGTH, (err: Error | null, derivedKey: Buffer) => {
       if (err) return resolve(false);
       resolve(crypto.timingSafeEqual(keyBuffer, derivedKey));
     });
   });
 }
+
+/**
+ * Generates a cryptographically secure random token for password resets
+ */
+export function generateResetToken(): string {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+/**
+ * Computes a secure SHA-256 hash of a reset token for safe database persistence
+ */
+export function hashResetToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
 

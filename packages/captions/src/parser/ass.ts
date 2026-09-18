@@ -15,7 +15,13 @@ export function assTimeToSeconds(timeStr: string): number {
   return h * 3600 + m * 60 + s + cs / 100;
 }
 
+const MAX_SUBTITLE_STRING_LENGTH = 5 * 1024 * 1024; // 5MB
+
 export function parseASS(assContent: string): CaptionLine[] {
+  if (assContent.length > MAX_SUBTITLE_STRING_LENGTH) {
+    throw new Error('Subtitle file exceeds maximum allowed text limit of 5MB.');
+  }
+
   const lines = assContent.split(/\r?\n/);
   const captions: CaptionLine[] = [];
   let inEvents = false;
