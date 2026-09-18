@@ -8,6 +8,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { SignUpSchema, SignUpDto } from '@captionstudio/types';
 import { Button, Input } from '@captionstudio/ui';
 import { ArrowRight, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { useAuth } from '@/context/auth-context';
 
 export default function SignUpPage() {
   const router = useRouter();
@@ -32,16 +33,18 @@ export default function SignUpPage() {
   const hasUpper = /[A-Z]/.test(passwordVal);
   const hasNumber = /[0-9]/.test(passwordVal);
 
+  const { signup } = useAuth();
+
   const onSubmit = async (data: SignUpDto) => {
     setIsLoading(true);
     setServerError(null);
 
     try {
-      // Phase 1 API integration
-      await new Promise((resolve) => setTimeout(resolve, 800));
-      setIsSuccess(true);
-    } catch {
-      setServerError('An account with this email already exists.');
+      await signup(data);
+      router.push('/dashboard');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'An account with this email already exists.';
+      setServerError(message);
     } finally {
       setIsLoading(false);
     }

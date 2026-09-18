@@ -14,8 +14,10 @@ import {
   Sparkles,
   CheckCircle2,
   ExternalLink,
+  LogOut,
 } from 'lucide-react';
 import { SIDEBAR_NAV, SIDEBAR_BOTTOM_NAV } from './sidebar';
+import { useAuth } from '@/context/auth-context';
 
 export function DashboardTopbar({
   onOpenMobileNav,
@@ -23,6 +25,7 @@ export function DashboardTopbar({
   onOpenMobileNav: () => void;
 }) {
   const { theme, setTheme } = useTheme();
+  const { user, logout } = useAuth();
   const [mounted, setMounted] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
 
@@ -132,13 +135,25 @@ export function DashboardTopbar({
           )}
         </div>
 
-        {/* User Avatar */}
-        <Link
-          href="/settings/profile"
-          className="h-8 w-8 rounded-full bg-[#635BFF]/20 text-[#635BFF] flex items-center justify-center font-bold text-xs ring-2 ring-transparent hover:ring-[#635BFF] transition-all"
-        >
-          AR
-        </Link>
+        {/* User Avatar & Logout */}
+        <div className="flex items-center gap-2">
+          <Link
+            href="/settings/profile"
+            title={user?.email || 'Profile'}
+            className="h-8 w-8 rounded-full bg-[#635BFF]/20 text-[#635BFF] flex items-center justify-center font-bold text-xs ring-2 ring-transparent hover:ring-[#635BFF] transition-all"
+          >
+            {user?.name
+              ? user.name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
+              : user?.email ? user.email.slice(0, 2).toUpperCase() : 'CS'}
+          </Link>
+          <button
+            onClick={() => logout()}
+            title="Sign out"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-500/10 transition-colors"
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
+        </div>
       </div>
     </header>
   );

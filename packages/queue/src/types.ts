@@ -28,5 +28,12 @@ export interface ExportJobData extends BaseJobData {
   options: TranscodeOptions;
 }
 
-export type AnyJobData = TranscriptionJobData | ThumbnailJobData | ExportJobData;
+export interface MediaAnalysisJobData extends BaseJobData {
+  type: JobType.MEDIA_ANALYSIS | 'MEDIA_ANALYSIS';
+  assetId: string;
+  storageKey: string;
+  originalFileName?: string;
+}
+
+export type AnyJobData = TranscriptionJobData | MediaAnalysisJobData | ThumbnailJobData | ExportJobData;
 

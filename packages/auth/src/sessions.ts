@@ -22,3 +22,16 @@ export function getSessionCookieOptions(isProduction = process.env.NODE_ENV === 
   };
 }
 
+export function getExpressCookieOptions(isProduction = process.env.NODE_ENV === 'production') {
+  return {
+    maxAge: 30 * 24 * 60 * 60 * 1000,
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: 'lax' as const,
+    path: '/',
+  };
+}
+
+export const AUTH_COOKIE_NAME = process.env.AUTH_COOKIE_NAME || 'cs_session';
+
+

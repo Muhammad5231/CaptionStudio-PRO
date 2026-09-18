@@ -1,6 +1,6 @@
 import { Queue } from 'bullmq';
 import { QUEUE_NAMES, DEFAULT_JOB_OPTIONS } from './constants';
-import { TranscriptionJobData, ThumbnailJobData, ExportJobData } from './types';
+import { TranscriptionJobData, ThumbnailJobData, ExportJobData, MediaAnalysisJobData } from './types';
 import { getRedisConnection } from './connection';
 
 let transcriptionQueue: Queue<TranscriptionJobData> | null = null;
@@ -25,6 +25,25 @@ export function getThumbnailQueue(): Queue<ThumbnailJobData> {
     });
   }
   return thumbnailQueue;
+}
+
+let mediaAnalysisQueue: Queue<MediaAnalysisJobData> | null = null;
+
+export function getMediaAnalysisQueue(): Queue<MediaAnalysisJobData> {
+  if (!mediaAnalysisQueue) {
+    mediaAnalysisQueue = new Queue<MediaAnalysisJobData>(QUEUE_NAMES.MEDIA_ANALYSIS, {
+      connection: getRedisConnection(),
+      defaultJobOptions: DEFAULT_JOB_OPTIONS,
+    });
+  }
+  return mediaAnalysisQueue;
+}
+
+export async function addMediaAnalysisJob(data: MediaAnalysisJobData) {
+  const queue = getMediaAnalysisQueue();
+  return queue.add('analyze-media', data, {
+    jobId: data.jobId,
+  });
 }
 
 export function getExportQueue(): Queue<ExportJobData> {

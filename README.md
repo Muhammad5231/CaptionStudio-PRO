@@ -1,4 +1,4 @@
-# CaptionStudio PRO — SaaS Platform (Phase 1)
+# CaptionStudio PRO — SaaS Platform (Phase 1 & Phase 2)
 
 > **CaptionStudio PRO** is a commercial-grade, web-based video caption and subtitle creation SaaS platform designed for high-growth video creators, podcasters, and media production agencies.
 
@@ -177,14 +177,15 @@ pnpm typecheck
 
 ---
 
-## Future Roadmap (Phases 2 – 9)
+## Platform Engineering Roadmap (Phases 1 – 9)
 
-- **Phase 2**: Production authentication integration, OAuth GitHub/Google providers, direct S3 upload presigning.
-- **Phase 3**: Self-hosted Whisper AI STT worker container, speaker diarization, audio denoiser.
-- **Phase 4**: Full multi-track video timeline editor, split/merge hotkeys, waveform visualizer.
-- **Phase 5**: Advanced kinetic typography rendering engine with bezier spring curves and particle highlights.
-- **Phase 6**: High-throughput GPU FFmpeg subtitle burning cluster (4K 60 FPS, ProRes, WebM, MP4).
-- **Phase 7**: Production Stripe Billing integration with webhooks and customer portal.
-- **Phase 8**: Super Admin cluster monitoring, user impersonation, and team seat management.
-- **Phase 9**: Global CDN edge distribution, observability (Prometheus/Grafana), and SOC2 audit compliance.
+- [x] **Phase 1: Foundation & SaaS Shell**: Design system, Next.js 14 layout, Prisma schema, Turborepo architecture.
+- [x] **Phase 2: Production Backend, Auth, Projects & Uploads**: PostgreSQL DB integration, scrypt auth & session cookies, workspace RBAC, project CRUD, S3/local storage abstraction, BullMQ media analysis worker (`captionstudio-media-analysis`), subtitle parser (SRT/VTT/ASS), SSE real-time updates.
+- [ ] **Phase 3: AI Speech-to-Text Engine**: Self-hosted Whisper STT worker container, word-level alignment, speaker diarization, audio denoiser.
+- [ ] **Phase 4: Timeline & Caption Editor**: Full multi-track video timeline editor, split/merge hotkeys, waveform visualizer.
+- [ ] **Phase 5: Caption Design & Kinetic Typography**: Advanced kinetic typography rendering engine with bezier spring curves and particle highlights.
+- [ ] **Phase 6: High-Performance Video Rendering Engine**: High-throughput GPU FFmpeg subtitle burning cluster (4K 60 FPS, ProRes, WebM, MP4).
+- [ ] **Phase 7: Production Stripe Billing**: Subscriptions, usage meter webhooks, and Stripe Customer Portal.
+- [ ] **Phase 8: Super Admin & Team Collaboration**: Cluster monitoring, user impersonation, and team seat management.
+- [ ] **Phase 9: Production Hardening, Edge CDN & Observability**: Global CDN edge distribution, Prometheus/Grafana observability, and SOC2 audit compliance.
 

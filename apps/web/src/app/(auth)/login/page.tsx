@@ -8,11 +8,14 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { LoginSchema, LoginDto } from '@captionstudio/types';
 import { Button, Input } from '@captionstudio/ui';
 import { ArrowRight, AlertCircle } from 'lucide-react';
+import { useAuth } from '@/context/auth-context';
 
 export default function LoginPage() {
   const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  const { login } = useAuth();
 
   const {
     register,
@@ -21,8 +24,8 @@ export default function LoginPage() {
   } = useForm<LoginDto>({
     resolver: zodResolver(LoginSchema),
     defaultValues: {
-      email: 'alex.creator@captionstudio.io',
-      password: 'Password123!',
+      email: '',
+      password: '',
       rememberMe: true,
     },
   });
@@ -32,11 +35,11 @@ export default function LoginPage() {
     setServerError(null);
 
     try {
-      // Simulate authentication request
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      await login(data.email, data.password, data.rememberMe);
       router.push('/dashboard');
-    } catch {
-      setServerError('Invalid email or password. Please try again.');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Invalid email or password. Please try again.';
+      setServerError(message);
     } finally {
       setIsLoading(false);
     }

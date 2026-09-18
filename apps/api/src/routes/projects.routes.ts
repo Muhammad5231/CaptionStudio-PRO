@@ -1,103 +1,55 @@
 import { Router } from 'express';
-import { CreateProjectSchema, UpdateProjectSchema, ProjectStatus } from '@captionstudio/types';
-import { requireAuth } from '../middlewares/auth.middleware';
+import { z } from 'zod';
+import { prisma, Prisma, ProjectStatus, WorkspaceRole } from '@captionstudio/database';
+import { CreateProjectSchema, UpdateProjectSchema } from '@captionstudio/types';
+import { authenticate } from '../middlewares/auth.middleware';
+import { requireWorkspace } from '../middlewares/workspace.middleware';
+import { requireProjectAccess } from '../middlewares/project.middleware';
+import { recordAuditLog } from '../services/audit.service';
 
 export const projectsRouter = Router();
 
-// Demo data for Phase 1
-let mockProjects = [
-  {
-    id: 'proj-1',
-    workspaceId: 'demo-workspace-1',
-    name: 'The 3 Keys to Bootstrapping a SaaS to $100K MRR',
-    description: 'Vertical 9:16 talking-head reel with Hormozi kinetic green subtitles.',
-    status: ProjectStatus.READY,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=600&h=340&fit=crop',
-    durationSeconds: 58.4,
-    width: 1080,
-    height: 1920,
-    fps: 30,
-    activeTemplateId: 'hormozi-emerald',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'proj-2',
-    workspaceId: 'demo-workspace-1',
-    name: 'AI Automation Masterclass Ep. 04 — Agentic Workflows',
-    description: 'Long-form YouTube video with chapterized subtitles and keyword highlights.',
-    status: ProjectStatus.EXPORTED,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&h=340&fit=crop',
-    durationSeconds: 420.2,
-    width: 1920,
-    height: 1080,
-    fps: 60,
-    activeTemplateId: 'nordic-clean',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'proj-3',
-    workspaceId: 'demo-workspace-1',
-    name: 'Quick Teaser: Product Hunt Launch Day Announcement',
-    description: 'Punchy 15s teaser with Beast Kinetic typography.',
-    status: ProjectStatus.DRAFT,
-    thumbnailUrl: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=600&h=340&fit=crop',
-    durationSeconds: 15.0,
-    width: 1080,
-    height: 1920,
-    fps: 30,
-    activeTemplateId: 'beast-yellow',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 12).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-];
+// All project endpoints require authentication
+projectsRouter.use(authenticate);
 
-projectsRouter.get('/', requireAuth, (req, res) => {
-  const { status, search } = req.query;
-  let filtered = [...mockProjects];
-
-  if (status && typeof status === 'string') {
-    filtered = filtered.filter((p) => p.status === status);
-  }
-
-  if (search && typeof search === 'string') {
-    const q = search.toLowerCase();
-    filtered = filtered.filter((p) => p.name.toLowerCase().includes(q));
-  }
-
-  res.json({
-    success: true,
-    data: filtered,
-    timestamp: new Date().toISOString(),
-  });
-});
-
-projectsRouter.post('/', requireAuth, (req, res, next) => {
+/**
+ * POST /api/v1/projects
+ * Creates a new project in the active workspace.
+ */
+projectsRouter.post('/', requireWorkspace(WorkspaceRole.EDITOR), async (req, res, next) => {
   try {
     const data = CreateProjectSchema.parse(req.body);
-    const newProject = {
-      id: `proj-${Date.now()}`,
-      workspaceId: req.user?.workspaceId || 'demo-workspace-1',
-      name: data.name,
-      description: data.description || '',
-      status: ProjectStatus.DRAFT,
-      thumbnailUrl: 'https://images.unsplash.com/photo-1574717024653-61fd2cf4d44d?w=600&h=340&fit=crop',
-      durationSeconds: 0,
-      width: 1080,
-      height: 1920,
-      fps: 30,
-      activeTemplateId: data.templateId || 'beast-yellow',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    const workspaceId = req.workspace!.id;
 
-    mockProjects.unshift(newProject);
+    const project = await prisma.project.create({
+      data: {
+        workspaceId,
+        name: data.name.trim(),
+        description: data.description?.trim() || null,
+        status: ProjectStatus.DRAFT,
+      },
+    });
+
+    await recordAuditLog({
+      userId: req.user!.id,
+      action: 'PROJECT_CREATE',
+      resource: `Project:${project.id}`,
+      details: { name: project.name, workspaceId },
+      ipAddress: req.ip,
+    });
 
     res.status(201).json({
       success: true,
-      data: newProject,
-      message: 'Project initialized successfully.',
+      data: {
+        id: project.id,
+        name: project.name,
+        description: project.description,
+        status: project.status,
+        workspaceId: project.workspaceId,
+        createdAt: project.createdAt.toISOString(),
+        updatedAt: project.updatedAt.toISOString(),
+      },
+      message: 'Project created successfully.',
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
@@ -105,45 +57,107 @@ projectsRouter.post('/', requireAuth, (req, res, next) => {
   }
 });
 
-projectsRouter.get('/:id', requireAuth, (req, res) => {
-  const project = mockProjects.find((p) => p.id === req.params.id);
-  if (!project) {
-    return res.status(404).json({
-      success: false,
-      error: {
-        code: 'PROJECT_NOT_FOUND',
-        message: `Project with ID ${req.params.id} was not found.`,
-        statusCode: 404,
-      },
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  res.json({
-    success: true,
-    data: project,
-    timestamp: new Date().toISOString(),
-  });
-});
-
-projectsRouter.patch('/:id', requireAuth, (req, res, next) => {
+/**
+ * GET /api/v1/projects
+ * Lists projects with pagination, search, status filtering, and sorting.
+ * Strictly isolated to the authenticated user's workspace.
+ */
+projectsRouter.get('/', requireWorkspace(WorkspaceRole.VIEWER), async (req, res, next) => {
   try {
-    const data = UpdateProjectSchema.parse(req.body);
-    const project = mockProjects.find((p) => p.id === req.params.id);
+    const workspaceId = req.workspace!.id;
 
-    if (!project) {
-      return res.status(404).json({
-        success: false,
-        error: { code: 'NOT_FOUND', message: 'Project not found', statusCode: 404 },
-        timestamp: new Date().toISOString(),
-      });
-    }
+    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize as string, 10) || 20));
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    const statusParam = typeof req.query.status === 'string' ? req.query.status.toUpperCase() : '';
+    const sortField = req.query.sort === 'name' ? 'name' : req.query.sort === 'createdAt' ? 'createdAt' : 'updatedAt';
+    const sortOrder = req.query.order === 'asc' ? 'asc' : 'desc';
 
-    Object.assign(project, data, { updatedAt: new Date().toISOString() });
+    const where: Prisma.ProjectWhereInput = {
+      workspaceId,
+      ...(statusParam && statusParam !== 'ALL' && Object.values(ProjectStatus).includes(statusParam as ProjectStatus)
+        ? { status: statusParam as ProjectStatus }
+        : {}),
+      ...(search
+        ? {
+            OR: [
+              { name: { contains: search, mode: 'insensitive' } },
+              { description: { contains: search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+
+    const [items, total] = await Promise.all([
+      prisma.project.findMany({
+        where,
+        include: {
+          assets: {
+            select: {
+              id: true,
+              type: true,
+              url: true,
+              sizeBytes: true,
+              durationSeconds: true,
+              width: true,
+              height: true,
+              fps: true,
+              createdAt: true,
+            },
+          },
+          versions: {
+            orderBy: { versionNumber: 'desc' },
+            take: 1,
+            select: {
+              id: true,
+              versionNumber: true,
+              createdAt: true,
+            },
+          },
+        },
+        orderBy: { [sortField]: sortOrder },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      prisma.project.count({ where }),
+    ]);
+
+    const totalPages = Math.ceil(total / pageSize);
+
+    // Format items serializing BigInt values safely
+    const formattedItems = items.map((p) => ({
+      id: p.id,
+      name: p.name,
+      description: p.description,
+      status: p.status,
+      thumbnailUrl: p.thumbnailUrl,
+      durationSeconds: p.durationSeconds,
+      width: p.width,
+      height: p.height,
+      fps: p.fps,
+      workspaceId: p.workspaceId,
+      assets: p.assets.map((a) => ({
+        ...a,
+        sizeBytes: Number(a.sizeBytes),
+      })),
+      latestVersion: p.versions[0] || null,
+      createdAt: p.createdAt.toISOString(),
+      updatedAt: p.updatedAt.toISOString(),
+    }));
 
     res.json({
       success: true,
-      data: project,
+      data: {
+        items: formattedItems,
+        pagination: {
+          page,
+          pageSize,
+          total,
+          totalPages,
+          hasNextPage: page < totalPages,
+          hasPrevPage: page > 1,
+        },
+      },
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
@@ -151,38 +165,255 @@ projectsRouter.patch('/:id', requireAuth, (req, res, next) => {
   }
 });
 
-projectsRouter.delete('/:id', requireAuth, (req, res) => {
-  mockProjects = mockProjects.filter((p) => p.id !== req.params.id);
-  res.json({
-    success: true,
-    data: { id: req.params.id, deleted: true },
-    timestamp: new Date().toISOString(),
-  });
+/**
+ * GET /api/v1/projects/:id
+ * Fetches a single project by ID with full metadata, assets, and version tracks.
+ */
+projectsRouter.get('/:id', requireProjectAccess(WorkspaceRole.VIEWER), async (req, res, next) => {
+  try {
+    const project = await prisma.project.findUniqueOrThrow({
+      where: { id: req.params.id },
+      include: {
+        assets: {
+          orderBy: { createdAt: 'desc' },
+        },
+        versions: {
+          orderBy: { versionNumber: 'desc' },
+        },
+        exportJobs: {
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+        },
+      },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        id: project.id,
+        name: project.name,
+        description: project.description,
+        status: project.status,
+        thumbnailUrl: project.thumbnailUrl,
+        durationSeconds: project.durationSeconds,
+        width: project.width,
+        height: project.height,
+        fps: project.fps,
+        activeTemplateId: project.activeTemplateId,
+        workspaceId: project.workspaceId,
+        assets: project.assets.map((a) => ({
+          id: a.id,
+          type: a.type,
+          url: a.url,
+          mimeType: a.mimeType,
+          sizeBytes: Number(a.sizeBytes),
+          durationSeconds: a.durationSeconds,
+          width: a.width,
+          height: a.height,
+          fps: a.fps,
+          createdAt: a.createdAt.toISOString(),
+        })),
+        versions: project.versions.map((v) => ({
+          id: v.id,
+          versionNumber: v.versionNumber,
+          captionPayload: v.captionPayload,
+          changelog: v.changelog,
+          createdAt: v.createdAt.toISOString(),
+        })),
+        recentJobs: project.exportJobs.map((j) => ({
+          id: j.id,
+          type: j.type,
+          status: j.status,
+          progress: j.progress,
+          stage: j.stage,
+          errorMessage: j.errorMessage,
+          createdAt: j.createdAt.toISOString(),
+        })),
+        createdAt: project.createdAt.toISOString(),
+        updatedAt: project.updatedAt.toISOString(),
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
-// Transcribe endpoint shell
-projectsRouter.post('/:id/transcribe', requireAuth, (req, res) => {
-  res.status(202).json({
-    success: true,
-    data: {
-      jobId: `job-transcribe-${Date.now()}`,
-      status: 'PENDING',
-      message: 'Whisper transcription task queued.',
-    },
-    timestamp: new Date().toISOString(),
-  });
+/**
+ * PATCH /api/v1/projects/:id
+ * Updates project details (name, description, activeTemplateId).
+ */
+projectsRouter.patch('/:id', requireProjectAccess(WorkspaceRole.EDITOR), async (req, res, next) => {
+  try {
+    const data = UpdateProjectSchema.parse(req.body);
+
+    const project = await prisma.project.update({
+      where: { id: req.params.id },
+      data: {
+        ...(data.name ? { name: data.name.trim() } : {}),
+        ...(data.description !== undefined ? { description: data.description?.trim() || null } : {}),
+        ...(data.activeTemplateId ? { activeTemplateId: data.activeTemplateId } : {}),
+      },
+    });
+
+    await recordAuditLog({
+      userId: req.user!.id,
+      action: 'PROJECT_UPDATE',
+      resource: `Project:${project.id}`,
+      details: data as Record<string, unknown>,
+      ipAddress: req.ip,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        id: project.id,
+        name: project.name,
+        description: project.description,
+        status: project.status,
+        updatedAt: project.updatedAt.toISOString(),
+      },
+      message: 'Project updated successfully.',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
-// Export endpoint shell
-projectsRouter.post('/:id/export', requireAuth, (req, res) => {
-  res.status(202).json({
-    success: true,
-    data: {
-      jobId: `job-export-${Date.now()}`,
-      status: 'PENDING',
-      message: 'Video rendering and subtitle burn task queued.',
-    },
-    timestamp: new Date().toISOString(),
-  });
+/**
+ * POST /api/v1/projects/:id/archive
+ * Toggles or sets archive status on the project.
+ */
+projectsRouter.post('/:id/archive', requireProjectAccess(WorkspaceRole.EDITOR), async (req, res, next) => {
+  try {
+    const current = req.project!;
+    const newStatus = current.status === ProjectStatus.ARCHIVED ? ProjectStatus.DRAFT : ProjectStatus.ARCHIVED;
+
+    const project = await prisma.project.update({
+      where: { id: current.id },
+      data: { status: newStatus },
+    });
+
+    await recordAuditLog({
+      userId: req.user!.id,
+      action: 'PROJECT_ARCHIVE',
+      resource: `Project:${project.id}`,
+      details: { status: newStatus },
+      ipAddress: req.ip,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        id: project.id,
+        status: project.status,
+      },
+      message: newStatus === ProjectStatus.ARCHIVED ? 'Project archived.' : 'Project restored from archive.',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
+/**
+ * POST /api/v1/projects/:id/duplicate
+ * Clones project metadata and configurations without duplicating physical video assets.
+ */
+projectsRouter.post('/:id/duplicate', requireProjectAccess(WorkspaceRole.EDITOR), async (req, res, next) => {
+  try {
+    const source = await prisma.project.findUniqueOrThrow({
+      where: { id: req.params.id },
+      include: {
+        versions: {
+          orderBy: { versionNumber: 'desc' },
+          take: 1,
+        },
+      },
+    });
+
+    const duplicateName = `${source.name} (Copy)`;
+
+    const duplicated = await prisma.$transaction(async (tx) => {
+      const newProj = await tx.project.create({
+        data: {
+          workspaceId: source.workspaceId,
+          name: duplicateName,
+          description: source.description,
+          status: ProjectStatus.DRAFT,
+          activeTemplateId: source.activeTemplateId,
+          durationSeconds: source.durationSeconds,
+          width: source.width,
+          height: source.height,
+          fps: source.fps,
+        },
+      });
+
+      // If source had a version track, copy latest version
+      if (source.versions[0]) {
+        await tx.projectVersion.create({
+          data: {
+            projectId: newProj.id,
+            versionNumber: 1,
+            captionPayload: source.versions[0].captionPayload as object,
+            changelog: 'Cloned from project ' + source.id,
+          },
+        });
+      }
+
+      return newProj;
+    });
+
+    await recordAuditLog({
+      userId: req.user!.id,
+      action: 'PROJECT_DUPLICATE',
+      resource: `Project:${duplicated.id}`,
+      details: { sourceProjectId: source.id },
+      ipAddress: req.ip,
+    });
+
+    res.status(201).json({
+      success: true,
+      data: {
+        id: duplicated.id,
+        name: duplicated.name,
+        status: duplicated.status,
+        createdAt: duplicated.createdAt.toISOString(),
+      },
+      message: 'Project duplicated successfully.',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * DELETE /api/v1/projects/:id
+ * Permanently deletes the project and cascades related records.
+ */
+projectsRouter.delete('/:id', requireProjectAccess(WorkspaceRole.ADMIN), async (req, res, next) => {
+  try {
+    const projectId = req.params.id;
+
+    await prisma.project.delete({
+      where: { id: projectId },
+    });
+
+    await recordAuditLog({
+      userId: req.user!.id,
+      action: 'PROJECT_DELETE',
+      resource: `Project:${projectId}`,
+      ipAddress: req.ip,
+    });
+
+    res.json({
+      success: true,
+      message: 'Project deleted successfully.',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
+});

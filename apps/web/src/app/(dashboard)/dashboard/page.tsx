@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import {
   Plus,
@@ -14,54 +14,80 @@ import {
   Download,
   CheckCircle2,
   ExternalLink,
+  Loader2,
 } from 'lucide-react';
-import { Card, Button, StatusBadge, UsageMeter, PageHeader } from '@captionstudio/ui';
+import { Card, Button, StatusBadge, UsageMeter, PageHeader, EmptyState } from '@captionstudio/ui';
 import { ProjectStatus } from '@captionstudio/types';
+import { api } from '@/lib/api-client';
+import { useAuth } from '@/context/auth-context';
+
+interface ProjectItem {
+  id: string;
+  name: string;
+  description: string | null;
+  status: ProjectStatus;
+  thumbnailUrl: string | null;
+  durationSeconds: number | null;
+  updatedAt: string;
+}
+
+interface UsageData {
+  planTier: string;
+  transcriptionMinutesTotal: number;
+  transcriptionMinutesUsed: number;
+  storageBytesTotal: number;
+  storageBytesUsed: number;
+  exportsTotal: number;
+  exportsUsed: number;
+  projectsCount: number;
+}
 
 export default function DashboardHomePage() {
-  const recentProjects = [
-    {
-      id: 'proj-1',
-      name: 'The 3 Keys to Bootstrapping a SaaS to $100K MRR',
-      status: ProjectStatus.READY,
-      thumbnailUrl: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=500&h=300&fit=crop',
-      duration: '58.4s',
-      template: 'Hormozi Emerald',
-      updatedAt: '2 hours ago',
-    },
-    {
-      id: 'proj-2',
-      name: 'AI Automation Masterclass Ep. 04 — Agentic Workflows',
-      status: ProjectStatus.EXPORTED,
-      thumbnailUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&h=300&fit=crop',
-      duration: '7m 00s',
-      template: 'Nordic Clean',
-      updatedAt: 'Yesterday',
-    },
-    {
-      id: 'proj-3',
-      name: 'Quick Teaser: Product Hunt Launch Day Announcement',
-      status: ProjectStatus.DRAFT,
-      thumbnailUrl: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=500&h=300&fit=crop',
-      duration: '15.0s',
-      template: 'Beast Kinetic',
-      updatedAt: '3 days ago',
-    },
-  ];
+  const { user, workspace } = useAuth();
+  const [projects, setProjects] = useState<ProjectItem[]>([]);
+  const [usage, setUsage] = useState<UsageData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadDashboardData() {
+      try {
+        const [projRes, usageRes] = await Promise.all([
+          api.get<{ success: boolean; data: { items: ProjectItem[] } }>('/projects?pageSize=4'),
+          api.get<{ success: boolean; data: UsageData }>('/usage'),
+        ]);
+
+        setProjects(projRes.data.items || []);
+        setUsage(usageRes.data);
+      } catch {
+        // Fallback gracefully
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    loadDashboardData();
+  }, []);
+
+  const remainingMins = usage
+    ? Math.max(0, usage.transcriptionMinutesTotal - usage.transcriptionMinutesUsed).toFixed(1)
+    : '500';
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 pb-12">
       {/* Top Banner / Welcome */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 rounded-2xl bg-white dark:bg-[#111113] border border-slate-200 dark:border-zinc-800 shadow-sm">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold text-slate-900 dark:text-zinc-50">Welcome back, Alex</h1>
+            <h1 className="text-xl font-bold text-slate-900 dark:text-zinc-50">
+              Welcome back{user?.name ? `, ${user.name}` : ''}
+            </h1>
             <span className="rounded-full bg-[#635BFF]/10 text-[#635BFF] px-2.5 py-0.5 text-[11px] font-bold uppercase">
-              Pro Studio Plan
+              {usage?.planTier || 'Pro'} Plan
             </span>
           </div>
           <p className="mt-1 text-xs text-slate-500 dark:text-zinc-400">
-            You have 467.5 transcription minutes remaining in this monthly billing period.
+            {workspace ? `Active workspace: ${workspace.name} • ` : ''}
+            You have {remainingMins} transcription minutes available.
           </p>
         </div>
 
@@ -77,7 +103,7 @@ export default function DashboardHomePage() {
       {/* Quick Action Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Link
-          href="/projects?new=video"
+          href="/projects?new=true"
           className="p-5 rounded-2xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-[#111113] hover:border-[#635BFF]/60 hover:shadow-md transition-all group"
         >
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#635BFF]/10 text-[#635BFF] mb-3 group-hover:scale-105 transition-transform">
@@ -88,7 +114,7 @@ export default function DashboardHomePage() {
         </Link>
 
         <Link
-          href="/projects?new=subtitle"
+          href="/projects?new=true"
           className="p-5 rounded-2xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-[#111113] hover:border-amber-500/60 hover:shadow-md transition-all group"
         >
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10 text-amber-500 mb-3 group-hover:scale-105 transition-transform">
@@ -105,7 +131,7 @@ export default function DashboardHomePage() {
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-500 mb-3 group-hover:scale-105 transition-transform">
             <Layers className="h-5 w-5" />
           </div>
-          <h3 className="font-bold text-sm text-slate-900 dark:text-zinc-100">Browse 50+ Templates</h3>
+          <h3 className="font-bold text-sm text-slate-900 dark:text-zinc-100">Browse Templates</h3>
           <p className="mt-1 text-xs text-slate-500 dark:text-zinc-400">Explore trending styles, fonts, and animation presets.</p>
         </Link>
       </div>
@@ -125,110 +151,101 @@ export default function DashboardHomePage() {
             </Link>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {recentProjects.map((proj) => (
-              <div
-                key={proj.id}
-                className="group rounded-2xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-[#111113] overflow-hidden shadow-sm hover:border-[#635BFF]/50 transition-all flex flex-col justify-between"
-              >
-                <div className="relative aspect-video w-full bg-slate-900 overflow-hidden">
-                  <img
-                    src={proj.thumbnailUrl}
-                    alt={proj.name}
-                    className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-300"
-                  />
-                  <div className="absolute top-2.5 left-2.5">
-                    <StatusBadge status={proj.status} />
-                  </div>
-                  <div className="absolute bottom-2 right-2 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-mono text-white">
-                    {proj.duration}
-                  </div>
-                </div>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="h-6 w-6 animate-spin text-[#635BFF]" />
+            </div>
+          ) : projects.length === 0 ? (
+            <EmptyState
+              icon={<Video className="h-8 w-8 text-slate-400" />}
+              title="No projects yet"
+              description="Get started by creating a project and uploading your video or subtitle file."
+              action={
+                <Link href="/projects?new=true">
+                  <Button size="sm">Create First Project</Button>
+                </Link>
+              }
+            />
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {projects.map((proj) => (
+                <div
+                  key={proj.id}
+                  className="group rounded-2xl border border-slate-200 dark:border-zinc-800 bg-white dark:bg-[#111113] overflow-hidden shadow-sm hover:border-[#635BFF]/50 transition-all flex flex-col justify-between"
+                >
+                  <Link href={`/projects/${proj.id}`} className="relative aspect-video w-full bg-slate-900 overflow-hidden block">
+                    {proj.thumbnailUrl ? (
+                      <img
+                        src={proj.thumbnailUrl}
+                        alt={proj.name}
+                        className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
+                    ) : (
+                      <div className="h-full w-full flex items-center justify-center bg-slate-900 text-slate-500">
+                        <Video className="h-8 w-8 opacity-40" />
+                      </div>
+                    )}
+                    <div className="absolute top-2.5 left-2.5">
+                      <StatusBadge status={proj.status} />
+                    </div>
+                    {proj.durationSeconds ? (
+                      <span className="absolute bottom-2 right-2 rounded-md bg-black/80 px-2 py-0.5 text-[10px] font-mono text-white backdrop-blur-sm">
+                        {proj.durationSeconds.toFixed(1)}s
+                      </span>
+                    ) : null}
+                  </Link>
 
-                <div className="p-4 space-y-3 flex-1 flex flex-col justify-between">
-                  <div>
-                    <h3 className="font-bold text-xs text-slate-900 dark:text-zinc-100 line-clamp-1 group-hover:text-[#635BFF] transition-colors">
-                      {proj.name}
-                    </h3>
-                    <p className="text-[11px] text-slate-400 mt-0.5">Style: {proj.template}</p>
-                  </div>
-
-                  <div className="pt-2 border-t border-slate-100 dark:border-zinc-800/80 flex items-center justify-between text-[11px] text-slate-400">
-                    <span>{proj.updatedAt}</span>
+                  <div className="p-4 space-y-2">
                     <Link
-                      href={`/projects?edit=${proj.id}`}
-                      className="font-semibold text-[#635BFF] hover:underline"
+                      href={`/projects/${proj.id}`}
+                      className="text-sm font-bold text-slate-900 dark:text-zinc-100 hover:text-[#635BFF] line-clamp-1 transition-colors"
                     >
-                      Open Editor
+                      {proj.name}
                     </Link>
+                    <div className="flex items-center justify-between text-[11px] text-slate-400">
+                      <span>{new Date(proj.updatedAt).toLocaleDateString()}</span>
+                      <Link href={`/projects/${proj.id}`} className="text-[#635BFF] font-semibold hover:underline">
+                        Open Project
+                      </Link>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Right Column: Quota Meters & Active Plan */}
-        <div className="lg:col-span-4 space-y-6">
+        {/* Right Column: Usage Breakdown */}
+        <div className="lg:col-span-4 space-y-4">
+          <h2 className="text-base font-bold text-slate-900 dark:text-zinc-100">Monthly Usage</h2>
           <Card className="space-y-5">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-zinc-800">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-zinc-100">
-                Monthly Usage Quota
-              </span>
-              <Link href="/usage" className="text-xs text-[#635BFF] font-semibold hover:underline">
-                Details
-              </Link>
-            </div>
-
             <UsageMeter
-              label="AI Transcription"
-              current={32.5}
-              max={500}
-              unit="mins"
+              label="Transcription Minutes"
+              current={usage ? Math.round(usage.transcriptionMinutesUsed) : 0}
+              max={usage?.transcriptionMinutesTotal || 500}
+              unit="min"
             />
-
             <UsageMeter
-              label="Studio Rendering"
-              current={28.0}
-              max={500}
-              unit="mins"
-            />
-
-            <UsageMeter
-              label="Cloud Media Storage"
-              current={4.8}
+              label="Cloud Storage"
+              current={usage ? Number((usage.storageBytesUsed / (1024 * 1024 * 1024)).toFixed(1)) : 0}
               max={100}
               unit="GB"
             />
-
             <UsageMeter
-              label="Monthly Exports"
-              current={14}
-              max={300}
-              unit="videos"
+              label="Exports Completed"
+              current={usage?.exportsUsed || 0}
+              max={usage?.exportsTotal || 300}
+              unit="exports"
             />
-          </Card>
-
-          {/* Quick Support Card */}
-          <div className="p-5 rounded-2xl bg-gradient-to-br from-[#635BFF]/10 via-transparent to-transparent border border-[#635BFF]/20 space-y-3">
-            <div className="flex items-center gap-2 text-xs font-bold text-[#635BFF] uppercase tracking-wider">
-              <Sparkles className="h-4 w-4" />
-              <span>Need help editing?</span>
+            <div className="pt-2 border-t border-slate-100 dark:border-zinc-800">
+              <Link href="/settings/billing" className="text-xs font-semibold text-[#635BFF] hover:underline flex items-center justify-between">
+                <span>Manage Subscription</span>
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
             </div>
-            <p className="text-xs text-slate-600 dark:text-zinc-400 leading-relaxed">
-              Check out our 2-minute walkthrough on word-level styling and viral TikTok animation curves.
-            </p>
-            <Link
-              href="/resources"
-              className="inline-flex items-center gap-1 text-xs font-semibold text-[#635BFF] hover:underline"
-            >
-              <span>Watch tutorial</span>
-              <ExternalLink className="h-3 w-3" />
-            </Link>
-          </div>
+          </Card>
         </div>
       </div>
     </div>
   );
 }
-

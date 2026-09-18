@@ -10,7 +10,7 @@
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "test": "tsx --test tests/captions.test.ts tests/billing.test.ts tests/rbac.test.ts tests/auth.test.ts",
+    "test": "tsx --test tests/*.test.ts",
     "format": "prettier --write \"**/*.{ts,tsx,md,json}\"",
     "clean": "turbo run clean && rm -rf node_modules",
     "db:generate": "pnpm --filter @captionstudio/database db:generate",

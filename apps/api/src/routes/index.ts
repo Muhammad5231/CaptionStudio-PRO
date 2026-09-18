@@ -3,6 +3,7 @@ import { authRouter } from './auth.routes';
 import { projectsRouter } from './projects.routes';
 import { templatesRouter } from './templates.routes';
 import { jobsRouter } from './jobs.routes';
+import { uploadsRouter } from './uploads.routes';
 import { exportsRouter } from './exports.routes';
 import { usageRouter } from './usage.routes';
 import { billingRouter } from './billing.routes';
@@ -12,6 +13,7 @@ export const apiV1Router = Router();
 
 apiV1Router.use('/auth', authRouter);
 apiV1Router.use('/projects', projectsRouter);
+apiV1Router.use('/uploads', uploadsRouter);
 apiV1Router.use('/templates', templatesRouter);
 apiV1Router.use('/jobs', jobsRouter);
 apiV1Router.use('/exports', exportsRouter);

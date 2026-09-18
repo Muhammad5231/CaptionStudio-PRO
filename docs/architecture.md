@@ -48,3 +48,45 @@ flowchart TD
   - `@captionstudio/ui`: Reusable design system primitives.
   - `@captionstudio/types`: Shared TypeScript interfaces and DTOs.
 
+---
+
+## Phase 2 Implementation Architecture
+
+### 1. Authentication & Session Security
+- **Password Hashing**: Node.js native `crypto.scrypt` with random 16-byte salt, timing-safe buffer comparison (`crypto.timingSafeEqual`).
+- **Session Tokens**: 32-byte cryptographically secure random hexadecimal tokens stored in `Session` table with 30-day TTL, rolling activity updates.
+- **Cookies**: HTTP-only, `SameSite=Lax`, secure cookies (`cs_session`) with `cookie-parser` on the Express API.
+- **OAuth Ready**: Domain schema supports linked `Account` records (provider + providerAccountId) for Google/GitHub OAuth login.
+- **RBAC**: Multi-tenant authorization (`OWNER`, `ADMIN`, `MEMBER`, `VIEWER`) per workspace, preventing horizontal privilege escalation.
+
+### 2. Workspace & Project Data Isolation
+- Every project belongs to a `Workspace`. Every user belongs to one or more workspaces via `WorkspaceMember`.
+- IDOR Prevention: `projectMiddleware` and `workspaceMiddleware` verify workspace tenancy before any project CRUD operations.
+- Project duplication performs safe metadata cloning and links shared assets without duplicating multi-gigabyte video files.
+
+### 3. Upload & Storage Architecture
+- **Storage Abstraction**: `IStorageProvider` supports `LocalStorageProvider` (for local development and self-hosting) and `S3StorageProvider` (AWS S3, MinIO, Cloudflare R2).
+- **Two-Step Upload Lifecycle**:
+  1. `POST /api/v1/uploads/authorize`: Validates file type, size (<500MB), quota availability, and generates isolated storage key (`workspaces/{wId}/projects/{pId}/{type}/{fileId}.{ext}`).
+  2. Direct client upload via signed upload URL or streaming storage endpoint.
+  3. `POST /api/v1/uploads/complete`: Creates `Asset` record in DB and enqueues async processing jobs.
+
+### 4. Asynchronous Media Analysis Worker
+- **Queue**: `captionstudio-media-analysis` BullMQ queue backed by Redis with exponential backoff retries.
+- **Media Probe**: Worker daemon calls `ffprobe` to extract real container metadata:
+  - Video streams: dimensions (width/height), frame rate (FPS), video codec (`h264`, `hevc`, `vp9`, etc.), bitrate, duration.
+  - Audio streams: audio codec (`aac`, `mp3`, `opus`), sample rate (Hz), channels, bitrate.
+- **Progress Tracking**: Job progress updates persist to DB (`Job.progress`, `Job.status`) through 10% -> 30% -> 60% -> 85% -> 100%.
+
+### 5. Real-Time Server-Sent Events (SSE)
+- Endpoint: `GET /api/v1/jobs/:id/events`
+- Client opens persistent SSE connection to listen for real job progress and terminal states (`COMPLETED`, `FAILED`).
+- Prevents UI polling loops while ensuring immediate user feedback during media analysis and transcode operations.
+
+### 6. Subtitle Parser Engine
+- Multi-format ingestion support for:
+  - **SRT**: SubRip timecode format (`00:01:23,456 --> 00:01:25,789`), HTML tag cleanup, word-level token interpolation.
+  - **VTT**: WebVTT cues, note/header skipping, decimal timestamp parsing.
+  - **ASS/SSA**: Advanced SubStation Alpha dialogue parsing, override tag stripping (`{\b1}`, `{\pos()}`, `\N`).
+
+
