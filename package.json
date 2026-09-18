@@ -1,0 +1,31 @@
+{
+  "name": "captionstudio-pro",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CaptionStudio PRO — Professional AI Video Caption & Subtitle SaaS Platform",
+  "author": "CaptionStudio PRO Team",
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "tsx --test tests/captions.test.ts tests/billing.test.ts tests/rbac.test.ts tests/auth.test.ts",
+    "format": "prettier --write \"**/*.{ts,tsx,md,json}\"",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "db:generate": "pnpm --filter @captionstudio/database db:generate",
+    "db:push": "pnpm --filter @captionstudio/database db:push",
+    "db:seed": "pnpm --filter @captionstudio/database db:seed"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "tsx": "^4.19.1",
+    "turbo": "^2.1.2",
+    "typescript": "^5.6.2"
+  },
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}

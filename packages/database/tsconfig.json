@@ -1,0 +1,11 @@
+{
+  "extends": "@captionstudio/config/tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": ".",
+    "outDir": "./dist"
+  },
+  "include": ["src/**/*", "prisma/**/*"]
+}
+

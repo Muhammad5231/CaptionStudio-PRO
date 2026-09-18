@@ -1,0 +1,28 @@
+{
+  "name": "@captionstudio/worker",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@captionstudio/captions": "workspace:*",
+    "@captionstudio/database": "workspace:*",
+    "@captionstudio/media": "workspace:*",
+    "@captionstudio/queue": "workspace:*",
+    "@captionstudio/storage": "workspace:*",
+    "@captionstudio/types": "workspace:*",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@captionstudio/config": "workspace:*",
+    "@types/node": "^22.5.5",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}
+

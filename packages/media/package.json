@@ -1,0 +1,19 @@
+{
+  "name": "@captionstudio/media",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@captionstudio/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@captionstudio/config": "workspace:*",
+    "@types/node": "^22.5.5",
+    "typescript": "^5.6.2"
+  }
+}
+
