@@ -163,8 +163,7 @@ model ProjectAsset {
   height          Int?
   fps             Float?
 
-  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  storageObject StorageObject? @relation(fields: [storageKey], references: [key])
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 
@@ -328,7 +327,6 @@ model StorageObject {
   mimeType      String
   sizeBytes     BigInt
   etag          String?
-  projectAssets ProjectAsset[]
   createdAt     DateTime       @default(now())
 
   @@index([key])
