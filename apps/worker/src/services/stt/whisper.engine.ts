@@ -21,14 +21,6 @@ function resolvePythonPath(): string {
     return process.env.PYTHON_PATH;
   }
 
-  // Windows standard installation paths
-  if (process.platform === 'win32') {
-    const defaultWinPython = 'C:\\Users\\muham\\AppData\\Local\\Programs\\Python\\Python314\\python.exe';
-    if (fs.existsSync(defaultWinPython)) {
-      return defaultWinPython;
-    }
-  }
-
   return process.platform === 'win32' ? 'python' : 'python3';
 }
 
@@ -59,12 +51,12 @@ export class WhisperEngine implements ISTTEngine {
       PYTHONIOENCODING: 'utf-8',
     };
 
-    // Prepend ffmpeg bin path if on Windows
-    if (process.platform === 'win32') {
-      const kdenliveBin = 'C:\\Program Files\\Kdenlive\\bin';
+    // Prepend custom ffmpeg directory if configured via environment
+    if (process.env.FFMPEG_PATH) {
+      const ffmpegDir = path.dirname(process.env.FFMPEG_PATH);
       const existingPath = env.PATH || env.Path || '';
-      if (fs.existsSync(kdenliveBin) && !existingPath.includes(kdenliveBin)) {
-        env.PATH = `${kdenliveBin};${existingPath}`;
+      if (fs.existsSync(ffmpegDir) && !existingPath.includes(ffmpegDir)) {
+        env.PATH = `${ffmpegDir}${path.delimiter}${existingPath}`;
       }
     }
 

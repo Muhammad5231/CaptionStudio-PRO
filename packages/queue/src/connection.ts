@@ -13,8 +13,11 @@ export function getRedisConnection(): Redis {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
     lazyConnect: true,
+    connectTimeout: 3000,
     retryStrategy(times) {
-      // Reconnect with capped backoff to prevent connection loop spinning
+      if (process.env.NODE_ENV === 'test' || times > 10) {
+        return null; // Stop reconnecting during tests or after max retries
+      }
       return Math.min(times * 200, 3000);
     },
   };
@@ -25,7 +28,7 @@ export function getRedisConnection(): Redis {
   redisClient.on('error', (err) => {
     if (!hasLoggedRedisWarning) {
       console.warn(
-        `⚠️ [Redis] Connection unavailable (${err.message || 'ECONNREFUSED'}). Operations requiring Redis will pause or fall back to memory.`
+        `⚠️ [Redis] Connection unavailable at ${redisUrl} (${err.message || 'ECONNREFUSED'}). Operations requiring Redis will fail-closed (auth) or pause.`
       );
       hasLoggedRedisWarning = true;
     }
@@ -41,3 +44,53 @@ export function getRedisConnection(): Redis {
   return redisClient;
 }
 
+export function closeRedisConnection(): void {
+  if (redisClient) {
+    try {
+      redisClient.disconnect(false);
+    } catch {}
+    redisClient = null;
+  }
+}
+
+export interface RedisHealthStatus {
+  isConnected: boolean;
+  latencyMs: number | null;
+  status: string;
+  error: string | null;
+}
+
+export async function checkRedisHealth(): Promise<RedisHealthStatus> {
+  const client = getRedisConnection();
+  const start = Date.now();
+
+  try {
+    if (client.status === 'wait') {
+      await Promise.race([
+        client.connect(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Connection timeout')), 2000)),
+      ]);
+    }
+
+    const pong = await Promise.race([
+      client.ping(),
+      new Promise<string>((_, reject) => setTimeout(() => reject(new Error('Ping timeout')), 2000)),
+    ]);
+
+    const latencyMs = Date.now() - start;
+    return {
+      isConnected: pong === 'PONG',
+      latencyMs,
+      status: client.status,
+      error: null,
+    };
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Redis ping failed';
+    return {
+      isConnected: false,
+      latencyMs: null,
+      status: client.status,
+      error: errorMsg,
+    };
+  }
+}

@@ -13,6 +13,7 @@ export interface FFmpegCommandOptions {
 export interface IFFmpegService {
   execute(args: string[], onProgress?: (percent: number) => void): Promise<{ stdout: string; stderr: string }>;
   probe(filePath: string): Promise<Record<string, unknown>>;
+  getVersion(): Promise<string>;
   getFfmpegPath(): string;
   getFfprobePath(): string;
 }
@@ -63,6 +64,11 @@ export class FFmpegService implements IFFmpegService {
 
   getFfprobePath(): string {
     return this.ffprobePath;
+  }
+
+  async getVersion(): Promise<string> {
+    const { stdout } = await this.execute(['-version']);
+    return stdout;
   }
 
   async execute(args: string[], _onProgress?: (percent: number) => void): Promise<{ stdout: string; stderr: string }> {

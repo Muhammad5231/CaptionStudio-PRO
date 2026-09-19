@@ -5,6 +5,8 @@ import dotenv from 'dotenv';
 import { apiV1Router } from './routes/index';
 import { errorHandler } from './middlewares/error.middleware';
 
+import { checkRedisHealth, getRedisConnection } from '@captionstudio/queue';
+
 dotenv.config();
 
 const app = express();
@@ -26,11 +28,27 @@ app.use('/api/v1', apiV1Router);
 app.use(errorHandler);
 
 if (process.env.NODE_ENV !== 'test') {
-  app.listen(port, () => {
+  app.listen(port, async () => {
     console.log(`🚀 CaptionStudio PRO API Server listening on port ${port}`);
     console.log(`📡 Healthcheck available at http://localhost:${port}/api/v1/health`);
+
+    // Verify Redis connection on startup
+    const redisStatus = await checkRedisHealth();
+    if (redisStatus.isConnected) {
+      console.log(`✅ [Redis] Connected (${redisStatus.latencyMs}ms latency)`);
+    } else {
+      console.warn(
+        `⚠️ [Redis] Unavailable at ${process.env.REDIS_URL || 'redis://localhost:6379'}: ${redisStatus.error}`
+      );
+      if (process.env.NODE_ENV === 'development') {
+        console.warn(
+          '👉 [Dev Tip] Auth rate limiting will fail closed until Redis is started. Start Redis with: docker compose up -d redis'
+        );
+      }
+    }
   });
 }
 
 export default app;
+
 

@@ -52,6 +52,16 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
       });
     }
 
+    if (session.user.status === 'SUSPENDED') {
+      res.clearCookie(AUTH_COOKIE_NAME);
+      return res.status(403).json({
+        error: {
+          code: 'ACCOUNT_SUSPENDED',
+          message: 'This account has been suspended by an administrator.',
+        },
+      });
+    }
+
     req.session = session;
     req.user = session.user;
     next();

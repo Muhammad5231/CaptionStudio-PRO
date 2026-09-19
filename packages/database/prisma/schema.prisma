@@ -134,6 +134,7 @@ model User {
 
   sessions           Session[]
   passwordResetTokens PasswordResetToken[]
+  emailVerificationTokens EmailVerificationToken[]
   oauthAccounts      OAuthAccount[]
   workspaceMembers   WorkspaceMember[]
   subscriptions      Subscription[]
@@ -168,6 +169,20 @@ model Session {
 }
 
 model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+model EmailVerificationToken {
   id        String    @id @default(cuid())
   userId    String
   tokenHash String    @unique
@@ -502,6 +517,7 @@ model UsageLedger {
   amount      Float     // minutes or bytes or count
   projectId   String?
   jobId       String?
+  eventKey    String?   @unique // deterministic idempotency key, e.g. TRANSCRIPTION:jobId
 
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -511,6 +527,8 @@ model UsageLedger {
   @@index([userId])
   @@index([workspaceId])
   @@index([type])
+  @@index([jobId])
+  @@index([eventKey])
   @@index([createdAt])
 }
 

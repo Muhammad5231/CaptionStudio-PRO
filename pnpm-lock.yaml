@@ -228,6 +228,9 @@ importers:
 
   packages/billing:
     dependencies:
+      '@captionstudio/database':
+        specifier: workspace:*
+        version: link:../database
       '@captionstudio/types':
         specifier: workspace:*
         version: link:../types

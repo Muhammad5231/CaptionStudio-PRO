@@ -1,105 +1,115 @@
 import { Router } from 'express';
-import { TemplateCategoryEnum } from '@captionstudio/types';
+import { prisma } from '@captionstudio/database';
 
 export const templatesRouter = Router();
 
-const mockTemplates = [
-  {
-    id: 'tpl-1',
-    slug: 'beast-mode-yellow',
-    name: 'Beast Kinetic Yellow',
-    description: 'High-contrast bold font with bright yellow active word highlights and kinetic pop animation.',
-    category: TemplateCategoryEnum.TRENDING,
-    isPremium: false,
-    previewText: 'THIS IS HOW YOU HOOK VIEWERS IN 2 SECONDS!',
-    tags: ['viral', 'shorts', 'youtube', 'bold'],
-    downloadsCount: 14200,
-    likesCount: 3820,
-  },
-  {
-    id: 'tpl-2',
-    slug: 'nordic-clean-sub',
-    name: 'Nordic Clean Subtitle',
-    description: 'Ultra-clean sans-serif subtitle with subtle semi-transparent dark backing bar.',
-    category: TemplateCategoryEnum.MINIMAL,
-    isPremium: false,
-    previewText: 'Good design is as little design as possible.',
-    tags: ['documentary', 'minimal', 'clean', 'subtle'],
-    downloadsCount: 8900,
-    likesCount: 2150,
-  },
-  {
-    id: 'tpl-3',
-    slug: 'hormozi-emerald',
-    name: 'Hormozi Emerald Karaoke',
-    description: 'Word-by-word emerald green fill with rounded background chip and bounce pulse.',
-    category: TemplateCategoryEnum.PODCAST,
-    isPremium: true,
-    previewText: 'If you want to scale to eight figures, pay attention.',
-    tags: ['podcast', 'business', 'talking-head', 'hormozi'],
-    downloadsCount: 22400,
-    likesCount: 6510,
-  },
-  {
-    id: 'tpl-4',
-    slug: 'cannes-cinema-gold',
-    name: 'Cannes Classic Cinema',
-    description: 'Timeless movie style serif subtitle with subtle drop shadow.',
-    category: TemplateCategoryEnum.CINEMATIC,
-    isPremium: false,
-    previewText: 'In the end, we only regret the chances we did not take.',
-    tags: ['cinematic', 'film', 'classic', 'yellow'],
-    downloadsCount: 6100,
-    likesCount: 1490,
-  },
-  {
-    id: 'tpl-5',
-    slug: 'cyber-neon-violet',
-    name: 'Neon Cyber Pulse',
-    description: 'Electric violet neon glow tailored for gaming highlights and tech podcasts.',
-    category: TemplateCategoryEnum.GAMING,
-    isPremium: true,
-    previewText: 'INSANE 1v5 CLUTCH WITH ZERO SECONDS LEFT!',
-    tags: ['gaming', 'neon', 'streamer', 'twitch'],
-    downloadsCount: 11300,
-    likesCount: 3100,
-  },
-];
+/**
+ * GET /api/v1/templates
+ * Retrieves published video caption templates from database.
+ */
+templatesRouter.get('/', async (req, res, next) => {
+  try {
+    const { category, search } = req.query;
 
-templatesRouter.get('/', (req, res) => {
-  const { category, search } = req.query;
-  let result = [...mockTemplates];
+    const where: any = { isPublished: true };
 
-  if (category && typeof category === 'string' && category !== 'ALL') {
-    result = result.filter((t) => t.category === category);
-  }
+    if (category && typeof category === 'string' && category !== 'ALL') {
+      where.category = {
+        OR: [
+          { slug: category.toLowerCase() },
+          { name: category },
+        ],
+      };
+    }
 
-  if (search && typeof search === 'string') {
-    const q = search.toLowerCase();
-    result = result.filter((t) => t.name.toLowerCase().includes(q) || t.tags.some((tag) => tag.includes(q)));
-  }
+    if (search && typeof search === 'string' && search.trim()) {
+      const q = search.trim();
+      where.OR = [
+        { name: { contains: q, mode: 'insensitive' } },
+        { description: { contains: q, mode: 'insensitive' } },
+        { tags: { has: q.toLowerCase() } },
+      ];
+    }
 
-  res.json({
-    success: true,
-    data: result,
-    timestamp: new Date().toISOString(),
-  });
-});
+    const templates = await prisma.template.findMany({
+      where,
+      include: {
+        category: true,
+      },
+      orderBy: { downloadsCount: 'desc' },
+    });
 
-templatesRouter.get('/:slug', (req, res) => {
-  const tpl = mockTemplates.find((t) => t.slug === req.params.slug);
-  if (!tpl) {
-    return res.status(404).json({
-      success: false,
-      error: { code: 'NOT_FOUND', message: 'Template not found', statusCode: 404 },
+    res.json({
+      success: true,
+      data: templates.map((t) => ({
+        id: t.id,
+        slug: t.slug,
+        name: t.name,
+        description: t.description,
+        category: t.category.name,
+        categorySlug: t.category.slug,
+        isPremium: t.isPremium,
+        previewText: t.previewText,
+        previewThumbnailUrl: t.previewThumbnailUrl,
+        previewVideoUrl: t.previewVideoUrl,
+        styleConfig: t.styleConfig,
+        animationConfig: t.animationConfig,
+        tags: t.tags,
+        downloadsCount: t.downloadsCount,
+        likesCount: t.likesCount,
+        createdAt: t.createdAt.toISOString(),
+      })),
       timestamp: new Date().toISOString(),
     });
+  } catch (err) {
+    next(err);
   }
-
-  res.json({
-    success: true,
-    data: tpl,
-    timestamp: new Date().toISOString(),
-  });
 });
 
+/**
+ * GET /api/v1/templates/:slug
+ * Retrieves specific template with full styleConfig and animationConfig JSON payloads.
+ */
+templatesRouter.get('/:slug', async (req, res, next) => {
+  try {
+    const tpl = await prisma.template.findUnique({
+      where: { slug: req.params.slug },
+      include: {
+        category: true,
+      },
+    });
+
+    if (!tpl) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: `Template with slug "${req.params.slug}" not found.`, statusCode: 404 },
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        id: tpl.id,
+        slug: tpl.slug,
+        name: tpl.name,
+        description: tpl.description,
+        category: tpl.category.name,
+        categorySlug: tpl.category.slug,
+        isPremium: tpl.isPremium,
+        previewText: tpl.previewText,
+        previewThumbnailUrl: tpl.previewThumbnailUrl,
+        previewVideoUrl: tpl.previewVideoUrl,
+        styleConfig: tpl.styleConfig,
+        animationConfig: tpl.animationConfig,
+        tags: tpl.tags,
+        downloadsCount: tpl.downloadsCount,
+        likesCount: tpl.likesCount,
+        createdAt: tpl.createdAt.toISOString(),
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
+});

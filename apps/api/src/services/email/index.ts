@@ -1,4 +1,4 @@
-import { IEmailProvider } from './email.interface';
+import { IEmailProvider, EmailPayload } from './email.interface';
 import { ConsoleEmailProvider } from './console.provider';
 import { ResendEmailProvider } from './resend.provider';
 import { SMTPEmailProvider } from './smtp.provider';
@@ -11,6 +11,7 @@ export * from './smtp.provider';
 export * from './email.templates';
 
 export interface IEmailService {
+  sendEmail(payload: EmailPayload): Promise<{ messageId?: string }>;
   sendPasswordResetEmail(to: string, resetUrl: string): Promise<void>;
   sendEmailVerification(to: string, verificationUrl: string): Promise<void>;
   sendSecurityNotification(to: string, message: string): Promise<void>;
@@ -40,6 +41,13 @@ export class EmailService implements IEmailService {
     } else {
       this.provider = new ConsoleEmailProvider();
     }
+  }
+
+  async sendEmail(payload: EmailPayload): Promise<{ messageId?: string }> {
+    return this.provider.sendEmail({
+      from: this.defaultFrom,
+      ...payload,
+    });
   }
 
   async sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {

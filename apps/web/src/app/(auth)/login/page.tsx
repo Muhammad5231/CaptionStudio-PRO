@@ -10,9 +10,15 @@ import { Button, Input } from '@captionstudio/ui';
 import { ArrowRight, AlertCircle } from 'lucide-react';
 import { useAuth } from '@/context/auth-context';
 
+import { useSearchParams } from 'next/navigation';
+
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectUrl = searchParams.get('redirect') || '/dashboard';
+
   const [serverError, setServerError] = useState<string | null>(null);
+  const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const { login } = useAuth();
@@ -33,12 +39,16 @@ export default function LoginPage() {
   const onSubmit = async (data: LoginDto) => {
     setIsLoading(true);
     setServerError(null);
+    setUnverifiedEmail(null);
 
     try {
       await login(data.email, data.password, data.rememberMe);
-      router.push('/dashboard');
+      router.push(redirectUrl);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Invalid email or password. Please try again.';
+      if (message.includes('verify your email')) {
+        setUnverifiedEmail(data.email);
+      }
       setServerError(message);
     } finally {
       setIsLoading(false);
@@ -57,9 +67,21 @@ export default function LoginPage() {
       </div>
 
       {serverError && (
-        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          <span>{serverError}</span>
+        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-600 dark:text-red-400 space-y-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{serverError}</span>
+          </div>
+          {unverifiedEmail && (
+            <div className="pt-1">
+              <Link
+                href={`/verify-email?email=${encodeURIComponent(unverifiedEmail)}`}
+                className="font-semibold underline hover:opacity-80"
+              >
+                Go to verification page to resend email
+              </Link>
+            </div>
+          )}
         </div>
       )}
 
@@ -67,8 +89,8 @@ export default function LoginPage() {
       <div className="grid grid-cols-2 gap-3">
         <button
           type="button"
-          onClick={() => router.push('/dashboard')}
-          className="flex items-center justify-center gap-2 h-10 rounded-lg border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs font-semibold text-slate-700 dark:text-zinc-300 hover:bg-slate-50 dark:hover:bg-zinc-800 transition-colors"
+          onClick={() => setServerError('OAuth login is not configured for this environment.')}
+          className="flex items-center justify-center gap-2 h-10 rounded-lg border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs font-semibold text-slate-400 dark:text-zinc-500 cursor-not-allowed transition-colors"
         >
           <svg className="h-4 w-4" viewBox="0 0 24 24">
             <path

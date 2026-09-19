@@ -1,56 +1,83 @@
 import { Router, Request, Response } from 'express';
-import { prisma, PlanTier } from '@captionstudio/database';
+import { usageService } from '@captionstudio/billing';
 import { authenticate } from '../middlewares/auth.middleware';
 
 export const usageRouter = Router();
 
-usageRouter.get('/', authenticate, async (req: Request, res: Response) => {
-  const activeWorkspace = req.user!.workspaceMembers[0];
-  const workspaceId = activeWorkspace?.workspaceId;
+/**
+ * GET /api/v1/usage
+ * Retrieves accurate quota and current cycle usage for the active workspace.
+ */
+usageRouter.get('/', authenticate, async (req: Request, res: Response, next) => {
+  try {
+    const activeWorkspace = req.user!.workspaceMembers[0];
+    const workspaceId = (req.query.workspaceId as string) || activeWorkspace?.workspaceId;
 
-  // Aggregate real usage from UsageLedger
-  const usageRecords = workspaceId
-    ? await prisma.usageLedger.findMany({
-        where: { workspaceId },
-      })
-    : [];
+    if (!workspaceId) {
+      return res.status(400).json({
+        error: {
+          code: 'WORKSPACE_REQUIRED',
+          message: 'No active workspace found for user.',
+        },
+      });
+    }
 
-  let totalStorageBytes = 0;
-  let totalTranscriptionMins = 0;
-  let totalRenderMins = 0;
-  let totalExports = 0;
+    const { quota, tier, periodStart, periodEnd, subscriptionId } = await usageService.getWorkspaceQuota(
+      workspaceId,
+      req.user!.id
+    );
 
-  for (const record of usageRecords) {
-    if (record.type === 'STORAGE_BYTES') totalStorageBytes += record.amount;
-    if (record.type === 'TRANSCRIPTION_MINUTES') totalTranscriptionMins += record.amount;
-    if (record.type === 'RENDER_MINUTES') totalRenderMins += record.amount;
-    if (record.type === 'EXPORTS_COUNT') totalExports += record.amount;
+    res.json({
+      success: true,
+      data: {
+        ...quota,
+        tier,
+        subscriptionId: subscriptionId || null,
+        periodStart: periodStart.toISOString(),
+        periodEnd: periodEnd.toISOString(),
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
   }
+});
 
-  const projectsCount = workspaceId
-    ? await prisma.project.count({ where: { workspaceId } })
-    : 0;
+/**
+ * GET /api/v1/usage/ledger
+ * Retrieves paginated audit log of usage events (transcription minutes, exports, storage, renders).
+ */
+usageRouter.get('/ledger', authenticate, async (req: Request, res: Response, next) => {
+  try {
+    const activeWorkspace = req.user!.workspaceMembers[0];
+    const workspaceId = (req.query.workspaceId as string) || activeWorkspace?.workspaceId;
 
-  res.json({
-    success: true,
-    data: {
-      planTier: PlanTier.PRO,
-      transcriptionMinutesTotal: 500,
-      transcriptionMinutesUsed: totalTranscriptionMins || 0,
-      renderMinutesTotal: 500,
-      renderMinutesUsed: totalRenderMins || 0,
-      storageBytesTotal: 100 * 1024 * 1024 * 1024,
-      storageBytesUsed: totalStorageBytes || 0,
-      exportsTotal: 300,
-      exportsUsed: totalExports || 0,
-      projectsCount,
-      maxProjects: 100,
-      allow4kExport: true,
-      allow60Fps: true,
-      allowCustomFonts: true,
-      allowTeamCollaboration: true,
-      removeWatermark: true,
-    },
-    timestamp: new Date().toISOString(),
-  });
+    if (!workspaceId) {
+      return res.status(400).json({
+        error: {
+          code: 'WORKSPACE_REQUIRED',
+          message: 'No active workspace found for user.',
+        },
+      });
+    }
+
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+    const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : 0;
+    const type = req.query.type as any;
+
+    const result = await usageService.getWorkspaceLedger({
+      workspaceId,
+      limit,
+      offset,
+      type,
+    });
+
+    res.json({
+      success: true,
+      data: result,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
 });

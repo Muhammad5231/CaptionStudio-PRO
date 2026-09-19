@@ -221,16 +221,41 @@ pnpm typecheck
   - Completely eradicated fake data (`mrrUsd = 14500`, `storageUsedBytes = 4200000000000`, `plan = PRO`, `projectsCount = 5`).
   - Queries actual database counts, real storage aggregates, real job status distributions, and marks billing metrics as `NOT_IMPLEMENTED`.
   - Admin status updates validated via Zod enum, prevents self-suspension, revokes sessions on suspension, and logs audit events.
-- **Defensive Subtitle Resource Limits**:
-  - Enforced 5MB max text limits, 10,000 maximum cues, and 2,000 character line length guards.
+### Production Stabilization & Hardening (Latest Updates)
+- **Real Email Verification Flow**:
+  - `EmailVerificationToken` table with single-use SHA-256 token hashing and 1-hour expiration.
+  - Accounts created in `PENDING_VERIFICATION` status; login blocked with `403 EMAIL_NOT_VERIFIED`.
+  - Full client activation UI (`/verify-email?token=...`), resend verification flow, and zero dev bypass links.
+- **Route Guards & RBAC**:
+  - Client-side auth protection across `/dashboard`, `/projects`, `/settings`.
+  - Admin console (`/admin`) strictly guarded for users with `ADMIN` role with 403 Access Denied fallback.
+  - Revocation of active sessions when accounts are suspended by an administrator.
+- **Zero-RAM Video Upload & Inspection**:
+  - Eliminated the 500MB Node.js Buffer download during upload completion.
+  - Container signature check inspects only the initial 8KB on disk via file descriptor slicing.
+  - Zero-copy FFprobe execution directly on local storage path without temporary disk cloning.
+  - Safe fallback streaming with automatic `finally` cleanup for remote storage drivers.
+- **Server-Managed Upload Intent**:
+  - Client uploads must be preceded by `POST /uploads/intent`, returning an `uploadIntentId`.
+  - Local upload receiver validates `UploadIntent` status, expiration, and payload size before writing.
+  - Client completes upload strictly using `{ uploadIntentId }`.
+  - False success on SSE error removed; replaced with deterministic fallback polling on `GET /jobs/:id`.
+- **Accurate Usage Accounting & Idempotency**:
+  - `UsageService` aggregates actual `UsageLedger` entries against user subscriptions or default `FREE` plan.
+  - Database-level unique constraint on `eventKey` guarantees that retry attempts do not duplicate usage deductions.
+  - Dashboard and admin UI display real DB numbers or `—` / `Loading...` / `Unavailable` (no fake Pro/500/100/300 fallbacks).
+- **Redis Health & Diagnostics**:
+  - Deep dependency check on `GET /health/dependencies` (Postgres, Redis, Storage, FFmpeg, Python/Whisper).
+  - Rate limiter fails closed in development with actionable instructions: `"Redis is unavailable. Start Docker/Redis and try again."`
+  - Worker daemon performs startup dependency verification for system binaries.
+- **Automated Verification Suite**:
+  - Tested with Node.js test runner across Redis auth, signup verification, usage service, upload intent, and subtitle parsing.
 
 ### Not Yet Implemented (Deferred to Future Phases)
-- **Phase 3**: Whisper AI STT worker container, word-level alignment, speaker diarization, audio denoiser.
-- **Phase 4**: Multi-track video timeline editor, split/merge hotkeys, waveform visualizer.
-- **Phase 5**: Kinetic typography rendering engine with bezier spring curves and particle highlights.
 - **Phase 6**: High-throughput GPU FFmpeg subtitle burning cluster (4K 60 FPS, ProRes, WebM, MP4).
 - **Phase 7**: Production Stripe billing integration with webhooks and customer portal.
-- **Phase 8**: Super Admin cluster monitoring, user impersonation, and team seat management.
+- **Phase 8**: User impersonation and team seat management.
 - **Phase 9**: Global CDN edge distribution, observability (Prometheus/Grafana), and SOC2 audit compliance.
+
 
 

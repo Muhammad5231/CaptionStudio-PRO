@@ -33,20 +33,40 @@ export default function SignUpPage() {
   const hasUpper = /[A-Z]/.test(passwordVal);
   const hasNumber = /[0-9]/.test(passwordVal);
 
-  const { signup } = useAuth();
+  const [submittedEmail, setSubmittedEmail] = useState('');
+  const [resendStatus, setResendStatus] = useState<string | null>(null);
+  const [isResending, setIsResending] = useState(false);
+
+  const { signup, resendVerification } = useAuth();
 
   const onSubmit = async (data: SignUpDto) => {
     setIsLoading(true);
     setServerError(null);
 
     try {
-      await signup(data);
-      router.push('/dashboard');
+      const res = await signup(data);
+      setSubmittedEmail(res.email || data.email);
+      setIsSuccess(true);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'An account with this email already exists.';
       setServerError(message);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleResend = async () => {
+    if (!submittedEmail || isResending) return;
+    setIsResending(true);
+    setResendStatus(null);
+    try {
+      await resendVerification(submittedEmail);
+      setResendStatus('A new verification email has been sent to your inbox.');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to resend verification email.';
+      setResendStatus(message);
+    } finally {
+      setIsResending(false);
     }
   };
 
@@ -59,15 +79,31 @@ export default function SignUpPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-zinc-50">Check your inbox</h1>
           <p className="mt-2 text-xs text-slate-500 dark:text-zinc-400 max-w-sm mx-auto">
-            We sent a verification link to your email address. Please click the link to activate your account and access your studio workspace.
+            We sent a verification link to <span className="font-semibold text-slate-700 dark:text-zinc-200">{submittedEmail}</span>. Please click the link to activate your account.
           </p>
         </div>
-        <div className="pt-2">
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center gap-2 text-xs font-semibold text-[#635BFF] hover:underline"
+
+        {resendStatus && (
+          <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+            {resendStatus}
+          </p>
+        )}
+
+        <div className="pt-2 flex flex-col gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full text-xs"
+            onClick={handleResend}
+            isLoading={isResending}
           >
-            <span>Proceed to Dashboard (Dev Bypass)</span>
+            Resend verification email
+          </Button>
+          <Link
+            href="/login"
+            className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold text-[#635BFF] hover:underline"
+          >
+            <span>Back to Sign In</span>
             <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </div>

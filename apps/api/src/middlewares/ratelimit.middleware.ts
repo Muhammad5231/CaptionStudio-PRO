@@ -63,6 +63,22 @@ export function createRateLimiter(options: RateLimitOptions) {
     const redisKey = `ratelimit:${prefix}:${sanitizedPath}:${clientId}`;
 
     const redis = getRedisConnection();
+    const isDev = process.env.NODE_ENV === 'development';
+    const unavailableMessage = isDev
+      ? 'Redis is unavailable. Start Docker/Redis and try again.'
+      : 'Rate limiting service is temporarily unavailable. Please try again shortly.';
+
+    // Attempt connection if client is in initial wait state
+    if (redis.status === 'wait') {
+      try {
+        await Promise.race([
+          redis.connect(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Connect timeout')), 1000)),
+        ]);
+      } catch {
+        // Handled below
+      }
+    }
 
     // If Redis is not currently ready, check failClosed configuration
     if (redis.status !== 'ready') {
@@ -70,7 +86,7 @@ export function createRateLimiter(options: RateLimitOptions) {
         return res.status(503).json({
           error: {
             code: 'SERVICE_UNAVAILABLE',
-            message: 'Rate limiting service is temporarily unavailable. Please try again shortly.',
+            message: unavailableMessage,
           },
         });
       }
@@ -113,7 +129,7 @@ export function createRateLimiter(options: RateLimitOptions) {
         return res.status(503).json({
           error: {
             code: 'SERVICE_UNAVAILABLE',
-            message: 'Rate limiting service is temporarily unavailable. Please try again shortly.',
+            message: unavailableMessage,
           },
         });
       }

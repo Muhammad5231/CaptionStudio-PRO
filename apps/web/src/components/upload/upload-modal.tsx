@@ -67,22 +67,23 @@ export function UploadModal({
     setErrorMessage(null);
 
     try {
-      // 1. Request upload authorization
-      const authRes = await api.post<{
+      // 1. Request server-managed upload intent
+      const intentRes = await api.post<{
         success: boolean;
         data: {
+          uploadIntentId: string;
           uploadUrl: string;
           storageKey: string;
           assetType: 'VIDEO' | 'SUBTITLE';
         };
-      }>('/uploads/authorize', {
+      }>('/uploads/intent', {
         projectId,
         fileName: selectedFile.name,
         fileSizeBytes: selectedFile.size,
         mimeType: selectedFile.type || 'application/octet-stream',
       });
 
-      const { uploadUrl, storageKey, assetType } = authRes.data;
+      const { uploadIntentId, uploadUrl, assetType } = intentRes.data;
 
       // 2. Direct streaming upload with byte progress
       setStageMessage('Uploading to studio storage...');
@@ -91,7 +92,7 @@ export function UploadModal({
         setStageMessage(`Uploading ${selectedFile.name} (${pct}%)...`);
       });
 
-      // 3. Complete upload notification
+      // 3. Complete upload notification with uploadIntentId
       setUploadStage('processing');
       setStageMessage('Verifying storage object & initializing processing...');
 
@@ -104,18 +105,54 @@ export function UploadModal({
         };
         message: string;
       }>('/uploads/complete', {
-        projectId,
-        storageKey,
-        fileName: selectedFile.name,
-        fileSizeBytes: selectedFile.size,
-        mimeType: selectedFile.type || 'application/octet-stream',
-        assetType,
+        uploadIntentId,
       });
 
-      // 4. If VIDEO and job created, subscribe to real-time SSE updates
+      // 4. If VIDEO and job created, monitor real-time SSE updates with fallback polling
       if (assetType === 'VIDEO' && completeRes.data.job?.id) {
         const jobId = completeRes.data.job.id;
         setStageMessage('Analyzing media streams with FFprobe...');
+
+        let resolved = false;
+
+        const pollJobStatus = async () => {
+          const maxAttempts = 30; // 30 attempts * 2s = 60s
+          for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            if (resolved) return;
+            try {
+              const res = await api.get<{
+                success: boolean;
+                data: { status: string; progress: number; stage?: string; errorMessage?: string };
+              }>(`/jobs/${jobId}`);
+
+              const job = res.data;
+              if (job.stage) setStageMessage(job.stage);
+              if (job.progress !== undefined) setProgress(job.progress);
+
+              if (job.status === 'COMPLETED') {
+                resolved = true;
+                setUploadStage('success');
+                setStageMessage('Media analysis complete! Project is ready.');
+                if (onSuccess) onSuccess();
+                return;
+              }
+              if (job.status === 'FAILED') {
+                resolved = true;
+                setUploadStage('error');
+                setErrorMessage(job.errorMessage || 'Media processing failed.');
+                return;
+              }
+            } catch {
+              // retry next tick
+            }
+            await new Promise((r) => setTimeout(r, 2000));
+          }
+
+          if (!resolved) {
+            setUploadStage('error');
+            setErrorMessage('Processing timed out. Please refresh the page to check status.');
+          }
+        };
 
         const eventSource = new EventSource(
           `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1'}/jobs/${jobId}/events`,
@@ -129,11 +166,13 @@ export function UploadModal({
             if (data.progress !== undefined) setProgress(data.progress);
 
             if (data.status === 'COMPLETED') {
+              resolved = true;
               eventSource.close();
               setUploadStage('success');
               setStageMessage('Media analysis complete! Project is ready.');
               if (onSuccess) onSuccess();
             } else if (data.status === 'FAILED') {
+              resolved = true;
               eventSource.close();
               setUploadStage('error');
               setErrorMessage(data.errorMessage || 'Media processing encountered an error.');
@@ -145,10 +184,10 @@ export function UploadModal({
 
         eventSource.onerror = () => {
           eventSource.close();
-          // Fallback to success if SSE closes normally
-          setUploadStage('success');
-          setStageMessage('Upload and analysis concluded.');
-          if (onSuccess) onSuccess();
+          if (!resolved) {
+            // Fallback to polling instead of false success!
+            pollJobStatus();
+          }
         };
       } else {
         // Subtitle upload concluded immediately

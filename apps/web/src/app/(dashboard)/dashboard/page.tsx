@@ -70,7 +70,7 @@ export default function DashboardHomePage() {
 
   const remainingMins = usage
     ? Math.max(0, usage.transcriptionMinutesTotal - usage.transcriptionMinutesUsed).toFixed(1)
-    : '500';
+    : null;
 
   return (
     <div className="space-y-8 pb-12">
@@ -82,12 +82,16 @@ export default function DashboardHomePage() {
               Welcome back{user?.name ? `, ${user.name}` : ''}
             </h1>
             <span className="rounded-full bg-[#635BFF]/10 text-[#635BFF] px-2.5 py-0.5 text-[11px] font-bold uppercase">
-              {usage?.planTier || 'Pro'} Plan
+              {isLoading ? 'Loading...' : usage?.planTier ? `${usage.planTier} Plan` : 'Free Plan'}
             </span>
           </div>
           <p className="mt-1 text-xs text-slate-500 dark:text-zinc-400">
             {workspace ? `Active workspace: ${workspace.name} • ` : ''}
-            You have {remainingMins} transcription minutes available.
+            {isLoading
+              ? 'Loading usage limits...'
+              : remainingMins !== null
+              ? `You have ${remainingMins} transcription minutes available.`
+              : 'Usage unavailable'}
           </p>
         </div>
 
@@ -222,19 +226,19 @@ export default function DashboardHomePage() {
             <UsageMeter
               label="Transcription Minutes"
               current={usage ? Math.round(usage.transcriptionMinutesUsed) : 0}
-              max={usage?.transcriptionMinutesTotal || 500}
+              max={usage ? usage.transcriptionMinutesTotal : 0}
               unit="min"
             />
             <UsageMeter
               label="Cloud Storage"
               current={usage ? Number((usage.storageBytesUsed / (1024 * 1024 * 1024)).toFixed(1)) : 0}
-              max={100}
+              max={usage ? Number((usage.storageBytesTotal / (1024 * 1024 * 1024)).toFixed(1)) : 0}
               unit="GB"
             />
             <UsageMeter
               label="Exports Completed"
               current={usage?.exportsUsed || 0}
-              max={usage?.exportsTotal || 300}
+              max={usage ? usage.exportsTotal : 0}
               unit="exports"
             />
             <div className="pt-2 border-t border-slate-100 dark:border-zinc-800">

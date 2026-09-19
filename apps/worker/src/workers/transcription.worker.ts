@@ -42,8 +42,12 @@ export function createTranscriptionWorker() {
       const { jobId, projectId, userId, workspaceId, audioStorageKey, language, whisperModel } = job.data;
       console.log(`[Transcription Worker] Processing job ${job.id} for project ${projectId}`);
 
-      // Check if job was already cancelled before starting
+      // Check if job was already completed or cancelled before starting
       const existingJob = await prisma.exportJob.findUnique({ where: { id: jobId } });
+      if (existingJob?.status === JobStatus.COMPLETED) {
+        console.log(`[Transcription Worker] Job ${jobId} was already completed. Skipping.`);
+        return { alreadyCompleted: true };
+      }
       if (existingJob?.status === JobStatus.CANCELLED) {
         console.log(`[Transcription Worker] Job ${jobId} was cancelled. Aborting.`);
         return { cancelled: true };
@@ -159,17 +163,25 @@ export function createTranscriptionWorker() {
             },
           });
 
-          // Record usage idempotently
-          await tx.usageLedger.create({
-            data: {
-              userId,
-              workspaceId,
-              type: 'TRANSCRIPTION_MINUTES',
-              amount: durationMinutes,
-              projectId,
-              jobId,
-            },
+          // Record usage idempotently with eventKey
+          const eventKey = `TRANSCRIPTION:${jobId}`;
+          const existingLedger = await tx.usageLedger.findUnique({
+            where: { eventKey },
           });
+
+          if (!existingLedger) {
+            await tx.usageLedger.create({
+              data: {
+                userId,
+                workspaceId,
+                type: 'TRANSCRIPTION_MINUTES',
+                amount: durationMinutes,
+                projectId,
+                jobId,
+                eventKey,
+              },
+            });
+          }
         });
 
         // 8. Mark Job Completed

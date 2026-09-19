@@ -1,6 +1,7 @@
 import { Router } from 'express';
+import crypto from 'node:crypto';
 import { SignUpSchema, LoginSchema, UserRole, WorkspaceRole } from '@captionstudio/types';
-import { prisma } from '@captionstudio/database';
+import { prisma, UserStatus } from '@captionstudio/database';
 import {
   hashPassword,
   verifyPassword,
@@ -14,12 +15,14 @@ import { authenticate } from '../middlewares/auth.middleware';
 import { authRateLimiter } from '../middlewares/ratelimit.middleware';
 import { recordAuditLog } from '../services/audit.service';
 import { emailService } from '../services/email.service';
+import { buildPasswordResetEmail, buildVerificationEmail } from '../services/email/email.templates';
 
 export const authRouter = Router();
 
 /**
  * POST /api/v1/auth/signup
- * Registers a new user, creates their default workspace and owner membership, and starts a session.
+ * Registers a new user with status PENDING_VERIFICATION, creates default workspace,
+ * hashes an EmailVerificationToken, and sends a verification email. Does NOT create an active session.
  */
 authRouter.post('/signup', authRateLimiter, async (req, res, next) => {
   try {
@@ -40,8 +43,9 @@ authRouter.post('/signup', authRateLimiter, async (req, res, next) => {
     }
 
     const passwordHash = await hashPassword(data.password);
-    const sessionToken = generateSessionToken();
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(verificationToken).digest('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 60 minutes TTL
 
     const rawSlug = (data.name || email.split('@')[0])
       .toLowerCase()
@@ -50,7 +54,7 @@ authRouter.post('/signup', authRateLimiter, async (req, res, next) => {
       .slice(0, 30);
     const uniqueSlug = `${rawSlug}-${Math.random().toString(36).substring(2, 7)}`;
 
-    // Atomic transaction: User + Workspace + WorkspaceMember + BrandKit + Session
+    // Atomic transaction: User (PENDING_VERIFICATION) + Workspace + WorkspaceMember + BrandKit + EmailVerificationToken
     const result = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
@@ -58,6 +62,7 @@ authRouter.post('/signup', authRateLimiter, async (req, res, next) => {
           name: data.name || email.split('@')[0],
           passwordHash,
           role: UserRole.CREATOR,
+          status: UserStatus.PENDING_VERIFICATION,
         },
       });
 
@@ -86,6 +91,111 @@ authRouter.post('/signup', authRateLimiter, async (req, res, next) => {
         },
       });
 
+      await tx.emailVerificationToken.create({
+        data: {
+          userId: user.id,
+          tokenHash,
+          expiresAt,
+        },
+      });
+
+      return { user, workspace, member };
+    });
+
+    await recordAuditLog({
+      userId: result.user.id,
+      action: 'USER_REGISTER_PENDING_VERIFICATION',
+      resource: `User:${result.user.id}`,
+      ipAddress: req.ip,
+    });
+
+    // Send verification email via provider (Resend, SMTP, or Console)
+    const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const verifyUrl = `${appUrl}/verify-email?token=${verificationToken}`;
+    const emailContent = buildVerificationEmail({ verifyUrl, expiresInMinutes: 60 });
+
+    try {
+      await emailService.sendEmail({
+        to: result.user.email,
+        subject: emailContent.subject,
+        html: emailContent.html,
+        text: emailContent.text,
+      });
+    } catch (emailErr) {
+      console.error('Failed to send account verification email:', emailErr);
+    }
+
+    res.status(201).json({
+      success: true,
+      data: {
+        email: result.user.email,
+        status: result.user.status,
+      },
+      message: 'Account created. Please check your email to verify your account.',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/v1/auth/verify-email
+ * Validates verification token hash, activates user, and creates authenticated session.
+ */
+authRouter.post('/verify-email', authRateLimiter, async (req, res, next) => {
+  try {
+    const { token } = req.body;
+    if (!token || typeof token !== 'string') {
+      return res.status(400).json({
+        error: {
+          code: 'INVALID_TOKEN',
+          message: 'Verification token is required.',
+        },
+      });
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    const record = await prisma.emailVerificationToken.findUnique({
+      where: { tokenHash },
+      include: {
+        user: {
+          include: {
+            workspaceMembers: {
+              include: { workspace: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!record || record.usedAt || record.expiresAt < new Date()) {
+      return res.status(400).json({
+        error: {
+          code: 'INVALID_OR_EXPIRED_TOKEN',
+          message: 'The verification link is invalid, expired, or has already been used.',
+        },
+      });
+    }
+
+    const sessionToken = generateSessionToken();
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.emailVerificationToken.update({
+        where: { id: record.id },
+        data: { usedAt: new Date() },
+      });
+
+      const user = await tx.user.update({
+        where: { id: record.userId },
+        data: {
+          status: UserStatus.ACTIVE,
+          emailVerified: new Date(),
+        },
+      });
+
       const session = await tx.session.create({
         data: {
           sessionToken,
@@ -96,19 +206,21 @@ authRouter.post('/signup', authRateLimiter, async (req, res, next) => {
         },
       });
 
-      return { user, workspace, member, session };
+      return { user, session };
     });
 
     await recordAuditLog({
       userId: result.user.id,
-      action: 'USER_REGISTER',
+      action: 'USER_EMAIL_VERIFIED',
       resource: `User:${result.user.id}`,
       ipAddress: req.ip,
     });
 
     res.cookie(AUTH_COOKIE_NAME, sessionToken, getExpressCookieOptions());
 
-    res.status(201).json({
+    const activeWorkspace = record.user.workspaceMembers[0];
+
+    res.json({
       success: true,
       data: {
         user: {
@@ -116,16 +228,83 @@ authRouter.post('/signup', authRateLimiter, async (req, res, next) => {
           email: result.user.email,
           name: result.user.name,
           role: result.user.role,
-          createdAt: result.user.createdAt.toISOString(),
         },
-        workspace: {
-          id: result.workspace.id,
-          name: result.workspace.name,
-          slug: result.workspace.slug,
-          role: result.member.role,
-        },
+        workspace: activeWorkspace
+          ? {
+              id: activeWorkspace.workspace.id,
+              name: activeWorkspace.workspace.name,
+              slug: activeWorkspace.workspace.slug,
+              role: activeWorkspace.role,
+            }
+          : null,
       },
-      message: 'Account created successfully.',
+      message: 'Email verified successfully. Welcome to CaptionStudio PRO!',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/v1/auth/resend-verification
+ * Resends verification email if an unverified user exists. Generic response prevents email enumeration.
+ */
+authRouter.post('/resend-verification', authRateLimiter, async (req, res, next) => {
+  try {
+    const { email } = req.body;
+    if (!email || typeof email !== 'string') {
+      return res.status(400).json({
+        error: {
+          code: 'INVALID_EMAIL',
+          message: 'Email address is required.',
+        },
+      });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    const user = await prisma.user.findUnique({
+      where: { email: cleanEmail },
+    });
+
+    if (user && user.status === UserStatus.PENDING_VERIFICATION) {
+      // Invalidate existing unused tokens
+      await prisma.emailVerificationToken.updateMany({
+        where: { userId: user.id, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+
+      const verificationToken = crypto.randomBytes(32).toString('hex');
+      const tokenHash = crypto.createHash('sha256').update(verificationToken).digest('hex');
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 60 mins
+
+      await prisma.emailVerificationToken.create({
+        data: {
+          userId: user.id,
+          tokenHash,
+          expiresAt,
+        },
+      });
+
+      const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+      const verifyUrl = `${appUrl}/verify-email?token=${verificationToken}`;
+      const emailContent = buildVerificationEmail({ verifyUrl, expiresInMinutes: 60 });
+
+      try {
+        await emailService.sendEmail({
+          to: user.email,
+          subject: emailContent.subject,
+          html: emailContent.html,
+          text: emailContent.text,
+        });
+      } catch (err) {
+        console.error('Failed to resend verification email:', err);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'If an unverified account exists with that email address, a new verification link has been sent.',
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
@@ -168,6 +347,33 @@ authRouter.post('/login', authRateLimiter, async (req, res, next) => {
         error: {
           code: 'INVALID_CREDENTIALS',
           message: 'Invalid email or password. Please try again.',
+        },
+      });
+    }
+
+    if (user.status === UserStatus.PENDING_VERIFICATION) {
+      return res.status(403).json({
+        error: {
+          code: 'EMAIL_NOT_VERIFIED',
+          message: 'Please verify your email address before signing in. Check your inbox for the verification link.',
+        },
+      });
+    }
+
+    if (user.status === UserStatus.SUSPENDED) {
+      return res.status(403).json({
+        error: {
+          code: 'ACCOUNT_SUSPENDED',
+          message: 'This account has been suspended by an administrator. Please contact support@captionstudio.io.',
+        },
+      });
+    }
+
+    if (user.status === UserStatus.DEACTIVATED) {
+      return res.status(403).json({
+        error: {
+          code: 'ACCOUNT_DEACTIVATED',
+          message: 'This account has been deactivated.',
         },
       });
     }
@@ -274,6 +480,7 @@ authRouter.get('/me', authenticate, async (req, res) => {
         email: user.email,
         name: user.name,
         role: user.role,
+        status: user.status,
         avatarUrl: user.avatarUrl,
         createdAt: user.createdAt.toISOString(),
       },

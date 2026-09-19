@@ -7,7 +7,35 @@ import { createExportWorker } from './workers/export.worker';
 
 dotenv.config();
 
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execAsync = promisify(exec);
+
 console.log('⚡ Starting CaptionStudio PRO Background Processing Workers...');
+
+// Dependency Verification
+async function verifyWorkerDependencies() {
+  console.log('🔍 [Worker:Diagnostics] Verifying system binaries...');
+  const ffmpegCmd = process.env.FFMPEG_PATH ? `"${process.env.FFMPEG_PATH}"` : 'ffmpeg';
+  const pythonCmd = process.env.PYTHON_PATH ? `"${process.env.PYTHON_PATH}"` : (process.platform === 'win32' ? 'python' : 'python3');
+
+  try {
+    await execAsync(`${ffmpegCmd} -version`);
+    console.log('  ✅ FFmpeg is installed and accessible.');
+  } catch {
+    console.warn('  ⚠️ FFmpeg was not found in PATH or configured path. Media processing may fail.');
+  }
+
+  try {
+    await execAsync(`${pythonCmd} -c "import whisper"`);
+    console.log('  ✅ Python + OpenAI Whisper is installed and ready.');
+  } catch {
+    console.warn('  ⚠️ Python or openai-whisper package not found. AI speech transcription will fail.');
+  }
+}
+
+verifyWorkerDependencies().catch(() => {});
 
 const connection = getRedisConnection();
 

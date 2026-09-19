@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import {
   prisma,
@@ -13,6 +14,7 @@ import {
   UploadIntentStatus,
 } from '@captionstudio/database';
 import { createStorageProvider, StoragePaths } from '@captionstudio/storage';
+import { usageService } from '@captionstudio/billing';
 import { OutboxDispatcher } from '@captionstudio/queue';
 import { parseSRT, parseVTT, parseASS } from '@captionstudio/captions';
 import {
@@ -134,7 +136,7 @@ async function handleCreateUploadIntent(req: Request, res: Response, next: NextF
     }
 
     // 5. Server generates secure random fileId and storageKey (Client cannot choose arbitrary path)
-    const fileId = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    const fileId = `${Date.now()}-${crypto.randomUUID()}`;
     const cleanExt = ext.replace(/^\./, '') || (assetType === AssetType.VIDEO ? 'mp4' : 'srt');
 
     const storageKey =
@@ -223,20 +225,64 @@ uploadsRouter.put('/storage/:key(*)', authenticate, async (req: Request, res: Re
       return res.status(403).json({ error: { code: 'INVALID_PATH', message: 'Illegal path traversal attempt.' } });
     }
 
-    // Tenancy verification from key path ("workspaces/{workspaceId}/projects/{projectId}/...")
-    const parts = key.split('/');
-    if (parts[0] === 'workspaces' && parts[1]) {
-      const workspaceId = parts[1];
-      const isMember = req.user!.workspaceMembers.some((m) => m.workspaceId === workspaceId);
-      if (!isMember && req.user!.role !== 'ADMIN' && req.user!.role !== 'SUPER_ADMIN') {
-        return res.status(403).json({
-          error: {
-            code: 'FORBIDDEN',
-            message: 'You do not have permission to upload files to this workspace.',
-          },
-        });
-      }
+    // Tenancy verification and Intent binding
+    const intent = await prisma.uploadIntent.findUnique({
+      where: { storageKey: key },
+    });
+
+    if (!intent) {
+      return res.status(404).json({
+        error: {
+          code: 'UPLOAD_INTENT_NOT_FOUND',
+          message: 'Upload intent required for this storage destination. Request an intent before uploading.',
+        },
+      });
     }
+
+    if (intent.expiresAt < new Date()) {
+      return res.status(410).json({
+        error: {
+          code: 'UPLOAD_INTENT_EXPIRED',
+          message: 'Upload intent has expired. Please initiate a new upload.',
+        },
+      });
+    }
+
+    if (intent.status === UploadIntentStatus.COMPLETED) {
+      return res.status(409).json({
+        error: {
+          code: 'INTENT_ALREADY_COMPLETED',
+          message: 'This upload intent has already been finalized.',
+        },
+      });
+    }
+
+    const isOwner = intent.userId === req.user!.id;
+    const isMember = req.user!.workspaceMembers.some((m) => m.workspaceId === intent.workspaceId);
+    if (!isOwner && !isMember && req.user!.role !== 'ADMIN' && req.user!.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({
+        error: {
+          code: 'FORBIDDEN',
+          message: 'You do not have permission to upload files to this workspace.',
+        },
+      });
+    }
+
+    // Check Content-Length header against max upload size
+    const contentLength = req.headers['content-length'] ? parseInt(req.headers['content-length'], 10) : 0;
+    if (contentLength > MAX_UPLOAD_BYTES) {
+      return res.status(413).json({
+        error: {
+          code: 'PAYLOAD_TOO_LARGE',
+          message: `Upload exceeds maximum allowed limit of ${MAX_UPLOAD_SIZE_MB}MB.`,
+        },
+      });
+    }
+
+    await prisma.uploadIntent.update({
+      where: { id: intent.id },
+      data: { status: UploadIntentStatus.UPLOADING },
+    });
 
     await storageProvider.upload(key, req, {
       contentType: req.headers['content-type'] || 'application/octet-stream',
@@ -414,59 +460,74 @@ uploadsRouter.post('/complete', authenticate, async (req: Request, res: Response
       });
     }
 
-    // Download file buffer for verification
-    const fileBuffer = await storageProvider.download(intent.storageKey);
-    const actualSizeBytes = fileBuffer.length;
+    let actualSizeBytes = 0;
+    let localFilePath: string | null = null;
+    let tempFileCreated = false;
 
-    if (actualSizeBytes <= 0) {
-      return res.status(422).json({
-        error: {
-          code: 'EMPTY_FILE',
-          message: 'Uploaded file is 0 bytes.',
-        },
+    if (typeof storageProvider.getLocalFilePath === 'function') {
+      localFilePath = storageProvider.getLocalFilePath(intent.storageKey);
+      const stat = await fs.promises.stat(localFilePath);
+      actualSizeBytes = stat.size;
+    } else {
+      // Remote storage driver fallback: stream directly to temp file without holding in RAM
+      const tempPath = path.join(
+        os.tmpdir(),
+        `captionstudio-stream-${Date.now()}-${crypto.randomUUID()}${path.extname(intent.storageKey) || '.bin'}`
+      );
+      const readStream = await storageProvider.downloadStream(intent.storageKey);
+      const writeStream = fs.createWriteStream(tempPath);
+      await new Promise<void>((resolve, reject) => {
+        readStream.pipe(writeStream);
+        writeStream.on('finish', () => resolve());
+        writeStream.on('error', reject);
       });
+      const stat = await fs.promises.stat(tempPath);
+      actualSizeBytes = stat.size;
+      localFilePath = tempPath;
+      tempFileCreated = true;
     }
 
-    if (actualSizeBytes > MAX_UPLOAD_BYTES) {
-      return res.status(413).json({
-        error: {
-          code: 'PAYLOAD_TOO_LARGE',
-          message: `Actual file size (${Math.round(actualSizeBytes / (1024 * 1024))}MB) exceeds maximum limit of ${MAX_UPLOAD_SIZE_MB}MB.`,
-        },
-      });
-    }
-
-    const fileUrl = storageProvider.getUrl(intent.storageKey);
-
-    // 5. Handle VIDEO vs SUBTITLE
-    if (intent.assetType === AssetType.VIDEO) {
-      // Validate container signature against executables and fake files
-      const signatureResult = validateContainerSignature(fileBuffer);
-      if (!signatureResult.valid) {
+    try {
+      if (actualSizeBytes <= 0) {
         return res.status(422).json({
           error: {
-            code: 'INVALID_CONTAINER_SIGNATURE',
-            message: signatureResult.error || 'Invalid or unrecognized video container signature.',
+            code: 'EMPTY_FILE',
+            message: 'Uploaded file is 0 bytes.',
           },
         });
       }
 
-      // Write to temp file for local probe validation
-      const tempPath = path.join(
-        os.tmpdir(),
-        `validate-${Date.now()}-${Math.random().toString(36).substring(2, 7)}${path.extname(intent.storageKey) || '.mp4'}`
-      );
+      if (actualSizeBytes > MAX_UPLOAD_BYTES) {
+        return res.status(413).json({
+          error: {
+            code: 'PAYLOAD_TOO_LARGE',
+            message: `Actual file size (${Math.round(actualSizeBytes / (1024 * 1024))}MB) exceeds maximum limit of ${MAX_UPLOAD_SIZE_MB}MB.`,
+          },
+        });
+      }
 
-      let probedMeta: {
-        width?: number;
-        height?: number;
-        durationSeconds?: number;
-        fps?: number;
-      } = {};
+      const fileUrl = storageProvider.getUrl(intent.storageKey);
 
-      try {
-        await fs.promises.writeFile(tempPath, fileBuffer);
-        const rawProbe = await ffmpegService.probe(tempPath);
+      // 5. Handle VIDEO vs SUBTITLE
+      if (intent.assetType === AssetType.VIDEO) {
+        // Read only the initial 8KB for container signature validation (zero RAM bloat)
+        const fd = await fs.promises.open(localFilePath, 'r');
+        const headerBuffer = Buffer.alloc(Math.min(8192, actualSizeBytes));
+        await fd.read(headerBuffer, 0, headerBuffer.length, 0);
+        await fd.close();
+
+        const signatureResult = validateContainerSignature(headerBuffer);
+        if (!signatureResult.valid) {
+          return res.status(422).json({
+            error: {
+              code: 'INVALID_CONTAINER_SIGNATURE',
+              message: signatureResult.error || 'Invalid or unrecognized video container signature.',
+            },
+          });
+        }
+
+        // Direct probe on file path without duplicating buffer or writing new temp files
+        const rawProbe = await ffmpegService.probe(localFilePath);
         const probeCheck = validateProbedMedia(rawProbe);
 
         if (!probeCheck.valid) {
@@ -478,17 +539,12 @@ uploadsRouter.post('/complete', authenticate, async (req: Request, res: Response
           });
         }
 
-        probedMeta = {
+        const probedMeta = {
           width: probeCheck.width,
           height: probeCheck.height,
           durationSeconds: probeCheck.durationSeconds,
           fps: probeCheck.fps,
         };
-      } finally {
-        if (fs.existsSync(tempPath)) {
-          await fs.promises.unlink(tempPath).catch(() => {});
-        }
-      }
 
       // Execute atomic transaction: ProjectAsset, ExportJob, OutboxEvent, UploadIntent COMPLETED
       const result = await prisma.$transaction(async (tx) => {
@@ -529,7 +585,7 @@ uploadsRouter.post('/complete', authenticate, async (req: Request, res: Response
           },
         });
 
-        // Record storage usage
+        // Record storage usage with idempotent eventKey
         await tx.usageLedger.create({
           data: {
             userId: req.user!.id,
@@ -537,6 +593,7 @@ uploadsRouter.post('/complete', authenticate, async (req: Request, res: Response
             type: 'STORAGE_BYTES',
             amount: actualSizeBytes,
             projectId: intent.projectId,
+            eventKey: `STORAGE_ASSET:${asset.id}`,
           },
         });
 
@@ -626,7 +683,7 @@ uploadsRouter.post('/complete', authenticate, async (req: Request, res: Response
         });
       }
 
-      const textContent = fileBuffer.toString('utf-8');
+      const textContent = await fs.promises.readFile(localFilePath, 'utf-8');
       const ext = path.extname(intent.storageKey).toLowerCase();
       let track;
 
@@ -657,6 +714,15 @@ uploadsRouter.post('/complete', authenticate, async (req: Request, res: Response
         });
       }
 
+      if (track.length > 10000) {
+        return res.status(422).json({
+          error: {
+            code: 'SUBTITLE_CUE_LIMIT_EXCEEDED',
+            message: `Subtitle file contains ${track.length} cues, exceeding the maximum permitted limit of 10,000 cues.`,
+          },
+        });
+      }
+
       const result = await prisma.$transaction(async (tx) => {
         await tx.uploadIntent.update({
           where: { id: intent.id },
@@ -674,6 +740,18 @@ uploadsRouter.post('/complete', authenticate, async (req: Request, res: Response
             url: fileUrl,
             mimeType: intent.expectedMimeType || 'text/plain',
             sizeBytes: BigInt(actualSizeBytes),
+          },
+        });
+
+        // Record storage usage for subtitle
+        await tx.usageLedger.create({
+          data: {
+            userId: req.user!.id,
+            workspaceId: intent.workspaceId,
+            type: 'STORAGE_BYTES',
+            amount: actualSizeBytes,
+            projectId: intent.projectId,
+            eventKey: `STORAGE_ASSET:${asset.id}`,
           },
         });
 
@@ -725,7 +803,12 @@ uploadsRouter.post('/complete', authenticate, async (req: Request, res: Response
         timestamp: new Date().toISOString(),
       });
     }
-  } catch (err) {
-    next(err);
+  } finally {
+    if (tempFileCreated && localFilePath && fs.existsSync(localFilePath)) {
+      await fs.promises.unlink(localFilePath).catch(() => {});
+    }
   }
+} catch (err) {
+  next(err);
+}
 });

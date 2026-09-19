@@ -1,6 +1,14 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { prisma, UserStatus, JobStatus } from '@captionstudio/database';
+import {
+  checkRedisHealth,
+  getRedisConnection,
+  getTranscriptionQueue,
+  getThumbnailQueue,
+  getMediaAnalysisQueue,
+  getExportQueue,
+} from '@captionstudio/queue';
 import { authenticate, requireSystemAdmin } from '../middlewares/auth.middleware';
 import { recordAuditLog } from '../services/audit.service';
 
@@ -265,6 +273,205 @@ adminRouter.patch('/users/:id/status', async (req: Request, res: Response, next:
         newStatus: status,
       },
       message: `User ${targetUserId} status updated from ${previousStatus} to ${status}.`,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/v1/admin/queues
+ * Real BullMQ queue metrics and Redis health.
+ */
+adminRouter.get('/queues', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const redisHealth = await checkRedisHealth();
+    if (!redisHealth.isConnected) {
+      return res.json({
+        success: true,
+        data: {
+          redis: redisHealth,
+          queues: [],
+          memory: null,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    let memoryUsedHuman = 'N/A';
+    try {
+      const redis = getRedisConnection();
+      const memInfo = await redis.info('memory');
+      const match = memInfo.match(/used_memory_human:([^\r\n]+)/);
+      if (match) {
+        memoryUsedHuman = match[1];
+      }
+    } catch {
+      // ignore
+    }
+
+    const queueList = [
+      { name: 'transcription-queue', queue: getTranscriptionQueue() },
+      { name: 'media-analysis-queue', queue: getMediaAnalysisQueue() },
+      { name: 'thumbnail-queue', queue: getThumbnailQueue() },
+      { name: 'export-queue', queue: getExportQueue() },
+    ];
+
+    const queues = await Promise.all(
+      queueList.map(async ({ name, queue }) => {
+        try {
+          const counts = await queue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed', 'paused');
+          return {
+            name,
+            counts,
+            status: counts.active > 0 ? 'ACTIVE' : 'IDLE',
+          };
+        } catch {
+          return {
+            name,
+            counts: { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0, paused: 0 },
+            status: 'UNAVAILABLE',
+          };
+        }
+      })
+    );
+
+    res.json({
+      success: true,
+      data: {
+        redis: {
+          ...redisHealth,
+          memoryUsedHuman,
+        },
+        queues,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/v1/admin/jobs
+ * Real database export jobs with associated project and user info.
+ */
+adminRouter.get('/jobs', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const status = req.query.status as JobStatus | undefined;
+    const where: any = {};
+    if (status && Object.values(JobStatus).includes(status)) {
+      where.status = status;
+    }
+
+    const jobs = await prisma.exportJob.findMany({
+      where,
+      take: 50,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        exportRecord: {
+          select: { url: true },
+        },
+        project: {
+          select: {
+            id: true,
+            name: true,
+            workspace: {
+              select: {
+                members: {
+                  where: { role: 'OWNER' },
+                  take: 1,
+                  include: {
+                    user: {
+                      select: { email: true, name: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    res.json({
+      success: true,
+      data: jobs.map((j) => ({
+        id: j.id,
+        type: j.type,
+        status: j.status,
+        progress: j.progress,
+        stage: j.stage,
+        errorMessage: j.errorMessage,
+        outputUrl: j.exportRecord?.url || null,
+        projectId: j.projectId,
+        projectName: j.project?.name || 'Untitled Project',
+        userEmail: j.project?.workspace?.members[0]?.user?.email || 'System',
+        createdAt: j.createdAt.toISOString(),
+        updatedAt: j.updatedAt.toISOString(),
+      })),
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/v1/admin/templates
+ * Real global templates from database.
+ */
+adminRouter.get('/templates', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const templates = await prisma.template.findMany({
+      orderBy: { downloadsCount: 'desc' },
+      include: {
+        category: true,
+      },
+    });
+
+    res.json({
+      success: true,
+      data: templates.map((t) => ({
+        id: t.id,
+        slug: t.slug,
+        name: t.name,
+        category: t.category.name,
+        isPublished: t.isPublished,
+        isPremium: t.isPremium,
+        downloads: t.downloadsCount,
+        likes: t.likesCount,
+        createdAt: t.createdAt.toISOString(),
+      })),
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PATCH /api/v1/admin/templates/:id
+ * Toggle published/premium status of a template.
+ */
+adminRouter.patch('/templates/:id', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const templateId = req.params.id;
+    const { isPublished, isPremium } = req.body;
+
+    const updated = await prisma.template.update({
+      where: { id: templateId },
+      data: {
+        ...(typeof isPublished === 'boolean' ? { isPublished } : {}),
+        ...(typeof isPremium === 'boolean' ? { isPremium } : {}),
+      },
+    });
+
+    res.json({
+      success: true,
+      data: updated,
+      message: `Template ${templateId} updated.`,
       timestamp: new Date().toISOString(),
     });
   } catch (err) {

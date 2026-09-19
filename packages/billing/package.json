@@ -8,7 +8,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@captionstudio/types": "workspace:*"
+    "@captionstudio/types": "workspace:*",
+    "@captionstudio/database": "workspace:*"
   },
   "devDependencies": {
     "@captionstudio/config": "workspace:*",
