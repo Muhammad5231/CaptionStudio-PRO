@@ -68,7 +68,7 @@ export function requireProjectAccess(minimumRole: WorkspaceRole = WorkspaceRole.
         });
       }
 
-      const userLevel = ROLE_HIERARCHY[membership.role] || 0;
+      const userLevel = ROLE_HIERARCHY[membership.role as WorkspaceRole] || 0;
       const requiredLevel = ROLE_HIERARCHY[minimumRole] || 1;
 
       if (userLevel < requiredLevel) {

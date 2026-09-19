@@ -19,47 +19,28 @@ billingRouter.get('/plans', (_req: Request, res: Response) => {
 
 /**
  * GET /api/v1/billing/subscription
- * Retrieves real active subscription from database for the authenticated user.
+ * Returns local development subscription status without Stripe/database subscription model.
  */
-billingRouter.get('/subscription', authenticate, async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const sub = await prisma.subscription.findFirst({
-      where: {
-        userId: req.user!.id,
-        status: 'ACTIVE',
-      },
-      include: {
-        plan: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+billingRouter.get('/subscription', authenticate, async (_req: Request, res: Response) => {
+  const now = new Date();
+  const currentPeriodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  const currentPeriodEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59)).toISOString();
 
-    if (!sub) {
-      return res.json({
-        success: true,
-        data: null,
-        message: 'No active paid subscription found.',
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    res.json({
-      success: true,
-      data: {
-        id: sub.id,
-        planTier: sub.plan.tier,
-        planName: sub.plan.name,
-        status: sub.status,
-        interval: sub.interval,
-        currentPeriodStart: sub.currentPeriodStart.toISOString(),
-        currentPeriodEnd: sub.currentPeriodEnd.toISOString(),
-        cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
-      },
-      timestamp: new Date().toISOString(),
-    });
-  } catch (err) {
-    next(err);
-  }
+  res.json({
+    success: true,
+    data: {
+      id: 'sub_local_dev',
+      planTier: 'LOCAL',
+      planName: 'Local Development Mode',
+      status: 'ACTIVE',
+      interval: 'MONTHLY',
+      currentPeriodStart,
+      currentPeriodEnd,
+      cancelAtPeriodEnd: false,
+    },
+    message: 'Local development mode active.',
+    timestamp: new Date().toISOString(),
+  });
 });
 
 /**

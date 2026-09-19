@@ -3,6 +3,7 @@ export enum PlanTier {
   CREATOR = 'CREATOR',
   PRO = 'PRO',
   BUSINESS = 'BUSINESS',
+  LOCAL = 'LOCAL',
 }
 
 export enum SubscriptionStatus {

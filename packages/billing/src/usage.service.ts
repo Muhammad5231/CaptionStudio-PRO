@@ -71,57 +71,17 @@ export class UsageService {
   }
 
   /**
-   * Retrieves accurate, non-mocked quota and usage for a given workspace.
+   * Retrieves accurate, non-mocked quota and usage for a given workspace in local development.
    */
-  async getWorkspaceQuota(workspaceId: string, userId?: string): Promise<WorkspaceQuotaResult> {
-    // 1. Look up active subscription for the user or workspace members
-    let activeSub: any = null;
+  async getWorkspaceQuota(workspaceId: string, _userId?: string): Promise<WorkspaceQuotaResult> {
+    const tier: DbPlanTier = (process.env.DEFAULT_PLAN_TIER as DbPlanTier) || DbPlanTier.LOCAL;
 
-    if (userId) {
-      activeSub = await prisma.subscription.findFirst({
-        where: { userId, status: 'ACTIVE' },
-        include: { plan: true },
-        orderBy: { createdAt: 'desc' },
-      });
-    }
-
-    if (!activeSub && workspaceId) {
-      const members = await prisma.workspaceMember.findMany({
-        where: { workspaceId },
-        include: {
-          user: {
-            include: {
-              subscriptions: {
-                where: { status: 'ACTIVE' },
-                include: { plan: true },
-                orderBy: { createdAt: 'desc' },
-                take: 1,
-              },
-            },
-          },
-        },
-      });
-
-      for (const m of members) {
-        if (m.user.subscriptions.length > 0) {
-          activeSub = m.user.subscriptions[0];
-          break;
-        }
-      }
-    }
-
-    const tier: DbPlanTier = (activeSub?.plan?.tier as DbPlanTier) || DbPlanTier.FREE;
-
-    // 2. Determine cycle start and end dates
+    // Determine cycle start and end dates (current month)
     const now = new Date();
-    const periodStart = activeSub
-      ? activeSub.currentPeriodStart
-      : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const periodEnd = activeSub
-      ? activeSub.currentPeriodEnd
-      : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+    const periodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const periodEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
 
-    // 3. Aggregate period ledger entries
+    // Aggregate period ledger entries
     const ledgerEntries = await prisma.usageLedger.findMany({
       where: {
         workspaceId,
@@ -153,7 +113,6 @@ export class UsageService {
       tier,
       periodStart,
       periodEnd,
-      subscriptionId: activeSub?.id,
     };
   }
 

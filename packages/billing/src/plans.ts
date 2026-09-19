@@ -131,5 +131,35 @@ export const PLAN_CONFIGS: Record<PlanTier, PlanConfig> = {
     ],
     ctaLabel: 'Contact Sales & Scale',
   },
+  [PlanTier.LOCAL]: {
+    tier: PlanTier.LOCAL,
+    name: 'Local Development',
+    badge: 'Local Mode',
+    description: 'Unlimited local resources for offline development and testing.',
+    monthlyPriceUsd: 0,
+    yearlyPriceUsd: 0,
+    quota: {
+      planTier: PlanTier.LOCAL,
+      transcriptionMinutesTotal: 9999,
+      renderMinutesTotal: 9999,
+      storageBytesTotal: 1024 * 1024 * 1024 * 1024, // 1 TB
+      exportsTotal: 9999,
+      maxProjects: 999,
+      allow4kExport: true,
+      allow60Fps: true,
+      allowCustomFonts: true,
+      allowTeamCollaboration: true,
+      removeWatermark: true,
+    },
+    features: [
+      'Unlimited local transcription (Whisper)',
+      'High-speed local rendering (FFmpeg)',
+      'All animated caption templates unlocked',
+      'Custom fonts & brand kits',
+      'Local disk storage',
+      'No watermarks',
+    ],
+    ctaLabel: 'Local Mode Active',
+  },
 };
 

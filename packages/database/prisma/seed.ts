@@ -1,64 +1,39 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import crypto from 'node:crypto';
+import { promisify } from 'node:util';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
-import { PrismaClient, PlanTier, UserRole, UserStatus, WorkspaceRole, ProjectStatus, UsageType } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
+import { UserRole, UserStatus, WorkspaceRole, ProjectStatus } from '../src/index';
 
 const prisma = new PrismaClient();
 
-async function main() {
-  console.log('🌱 Starting CaptionStudio PRO Database Seeding...');
+async function hashPassword(password: string): Promise<string> {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derivedKey = (await promisify(crypto.scrypt)(password, salt, 64)) as Buffer;
+  return `${salt}:${derivedKey.toString('hex')}`;
+}
 
-  // 1. Seed Plans
-  console.log('Creating Subscription Plans...');
+async function main() {
+  console.log('🌱 Starting CaptionStudio PRO Local SQLite Database Seeding...');
+
+  // 1. Seed Local Development Plans
+  console.log('Creating Local Development Plans...');
   const plansData = [
     {
-      tier: PlanTier.FREE,
-      name: 'Free Starter',
-      description: 'Ideal for trying out AI captions with watermarked exports.',
+      tier: 'FREE',
+      name: 'Free Local',
+      description: 'Local development plan with full feature access for testing.',
       monthlyPriceCents: 0,
       yearlyPriceCents: 0,
-      maxProjects: 3,
-      monthlyTranscribeMins: 15,
-      monthlyRenderMins: 15,
-      storageLimitBytes: BigInt(1024 * 1024 * 1024), // 1GB
-      maxExportsPerMonth: 5,
-      allow4kExport: false,
-      allow60Fps: false,
-      allowCustomFonts: false,
-      allowTeamCollaboration: false,
-      hasWatermark: true,
-    },
-    {
-      tier: PlanTier.CREATOR,
-      name: 'Creator',
-      description: 'Perfect for individual content creators posting to Shorts, Reels & TikTok.',
-      monthlyPriceCents: 1900, // $19/mo
-      yearlyPriceCents: 18000, // $180/yr ($15/mo)
-      maxProjects: 20,
-      monthlyTranscribeMins: 120,
-      monthlyRenderMins: 120,
-      storageLimitBytes: BigInt(25 * 1024 * 1024 * 1024), // 25GB
-      maxExportsPerMonth: 50,
-      allow4kExport: false,
-      allow60Fps: true,
-      allowCustomFonts: true,
-      allowTeamCollaboration: false,
-      hasWatermark: false,
-    },
-    {
-      tier: PlanTier.PRO,
-      name: 'Pro Studio',
-      description: 'For power creators and video editors needing 4K and full brand kit tools.',
-      monthlyPriceCents: 3900, // $39/mo
-      yearlyPriceCents: 37200, // $372/yr ($31/mo)
       maxProjects: 100,
-      monthlyTranscribeMins: 500,
-      monthlyRenderMins: 500,
+      monthlyTranscribeMins: 999999,
+      monthlyRenderMins: 999999,
       storageLimitBytes: BigInt(100 * 1024 * 1024 * 1024), // 100GB
-      maxExportsPerMonth: 300,
+      maxExportsPerMonth: 999999,
       allow4kExport: true,
       allow60Fps: true,
       allowCustomFonts: true,
@@ -66,16 +41,16 @@ async function main() {
       hasWatermark: false,
     },
     {
-      tier: PlanTier.BUSINESS,
-      name: 'Agency & Enterprise',
-      description: 'Scale caption production across large teams with priority processing.',
-      monthlyPriceCents: 9900, // $99/mo
-      yearlyPriceCents: 95000, // $950/yr
-      maxProjects: 1000,
-      monthlyTranscribeMins: 2000,
-      monthlyRenderMins: 2000,
-      storageLimitBytes: BigInt(500 * 1024 * 1024 * 1024), // 500GB
-      maxExportsPerMonth: 1000,
+      tier: 'LOCAL',
+      name: 'Local Development Studio',
+      description: 'Local development plan with unlimited features enabled.',
+      monthlyPriceCents: 0,
+      yearlyPriceCents: 0,
+      maxProjects: 100,
+      monthlyTranscribeMins: 999999,
+      monthlyRenderMins: 999999,
+      storageLimitBytes: BigInt(100 * 1024 * 1024 * 1024), // 100GB
+      maxExportsPerMonth: 999999,
       allow4kExport: true,
       allow60Fps: true,
       allowCustomFonts: true,
@@ -98,105 +73,72 @@ async function main() {
     { slug: 'trending', name: 'Trending', description: 'Viral social media caption styles' },
     { slug: 'minimal', name: 'Minimal', description: 'Clean, elegant, distraction-free subtitles' },
     { slug: 'bold', name: 'Bold & Punchy', description: 'Heavy typography with high contrast' },
-    { slug: 'podcast', name: 'Podcast & Interview', description: 'Speaker-differentiated captions for talking heads' },
-    { slug: 'gaming', name: 'Gaming & Streamer', description: 'Energetic animations, neon highlights' },
-    { slug: 'business', name: 'Business & SaaS', description: 'Polished corporate presentation titles' },
-    { slug: 'education', name: 'Education & Tutorials', description: 'Highlighted keywords and structured breakdown' },
-    { slug: 'motivation', name: 'Motivation & Fitness', description: 'Dynamic kinetic text with word-by-word pulse' },
-    { slug: 'shorts', name: 'Shorts / Reels / TikTok', description: 'Vertical 9:16 optimized center-aligned stacks' },
-    { slug: 'cinematic', name: 'Cinematic', description: 'Letterboxed subtitles with classic golden font' },
-    { slug: 'karaoke', name: 'Karaoke Fill', description: 'Smooth word color fill timed to speech' },
+    { slug: 'cinematic', name: 'Cinematic', description: 'Film-grade subtitles with atmospheric styling' },
+    { slug: 'gaming', name: 'Gaming', description: 'High-energy, neon animations for streams and clips' },
   ];
 
   const categoryMap = new Map<string, string>();
-
   for (const cat of categories) {
     const created = await prisma.templateCategory.upsert({
       where: { slug: cat.slug },
-      update: cat,
+      update: { name: cat.name, description: cat.description },
       create: cat,
     });
     categoryMap.set(cat.slug, created.id);
   }
 
-  // 3. Seed Realistic Templates
+  // 3. Seed Realistic System Templates
   console.log('Creating Realistic Templates...');
   const templates = [
     {
-      slug: 'beast-mode-yellow',
-      name: 'Beast Kinetic Yellow',
-      description: 'High-contrast bold font with bright yellow active word highlights and kinetic pop animation.',
+      slug: 'viral-beast-yellow',
+      name: 'Viral Beast Yellow',
+      description: 'High-energy yellow text with black stroke, inspired by top YouTube creators.',
       categorySlug: 'trending',
       isPremium: false,
-      previewText: 'THIS IS HOW YOU HOOK VIEWERS IN 2 SECONDS!',
-      tags: ['viral', 'shorts', 'youtube', 'bold'],
+      previewText: 'THIS TRICK CHANGED EVERYTHING I KNEW ABOUT EDITING!',
+      tags: ['youtube', 'viral', 'yellow', 'bold', 'punchy'],
       styleConfig: {
         fontFamily: 'Montserrat',
-        fontSize: 38,
+        fontSize: 32,
         fontWeight: '900',
-        color: '#FFFFFF',
+        color: '#FFE600',
         textTransform: 'uppercase',
         textAlign: 'center',
         strokeColor: '#000000',
         strokeWidth: 4,
-        shadowColor: 'rgba(0,0,0,0.8)',
-        shadowBlur: 8,
+        shadowColor: '#000000',
+        shadowBlur: 10,
         positionPreset: 'middle',
-        activeWordColor: '#FACC15', // Bright yellow
-        activeWordScale: 1.18,
+        activeWordColor: '#FFFFFF',
+        activeWordBgColor: '#000000',
+        activeWordScale: 1.2,
       },
       animationConfig: {
-        type: 'pop',
-        durationMs: 180,
-        inTiming: 'spring',
-        staggerWords: true,
+        type: 'pop-in',
+        durationMs: 150,
+        highlightColor: '#FFFFFF',
       },
     },
     {
-      slug: 'minimal-editorial',
-      name: 'Nordic Clean Subtitle',
-      description: 'Ultra-clean sans-serif subtitle with subtle semi-transparent dark backing bar.',
+      slug: 'minimal-swiss-clean',
+      name: 'Swiss Clean Typography',
+      description: 'Modern sans-serif text with soft translucent pill background.',
       categorySlug: 'minimal',
       isPremium: false,
-      previewText: 'Good design is as little design as possible.',
-      tags: ['documentary', 'minimal', 'clean', 'subtle'],
+      previewText: 'Simplicity is the ultimate sophistication.',
+      tags: ['clean', 'aesthetic', 'minimal', 'modern'],
       styleConfig: {
         fontFamily: 'Inter',
-        fontSize: 22,
+        fontSize: 24,
         fontWeight: '500',
-        color: '#F8FAFC',
-        backgroundColor: 'rgba(9, 9, 11, 0.75)',
+        color: '#FFFFFF',
+        backgroundColor: 'rgba(0, 0, 0, 0.65)',
         backgroundPadding: 10,
         backgroundCornerRadius: 6,
-        textTransform: 'none',
         textAlign: 'center',
         positionPreset: 'bottom',
-        activeWordColor: '#FFFFFF',
-      },
-      animationConfig: {
-        type: 'fade',
-        durationMs: 150,
-      },
-    },
-    {
-      slug: 'podcast-karaoke-green',
-      name: 'Hormozi Emerald Karaoke',
-      description: 'Word-by-word emerald green fill with rounded background chip and bounce pulse.',
-      categorySlug: 'podcast',
-      isPremium: true,
-      previewText: 'If you want to scale to eight figures, pay attention.',
-      tags: ['podcast', 'business', 'talking-head', 'hormozi'],
-      styleConfig: {
-        fontFamily: 'Plus Jakarta Sans',
-        fontSize: 32,
-        fontWeight: '800',
-        color: '#E2E8F0',
-        strokeColor: '#0F172A',
-        strokeWidth: 3,
-        textAlign: 'center',
-        textTransform: 'uppercase',
-        positionPreset: 'middle',
-        activeWordColor: '#10B981', // Emerald green
+        activeWordColor: '#10B981',
         activeWordBgColor: 'rgba(16, 185, 129, 0.18)',
         activeWordScale: 1.15,
       },
@@ -218,7 +160,7 @@ async function main() {
         fontFamily: 'Playfair Display',
         fontSize: 26,
         fontWeight: '600',
-        color: '#FEF08A', // Classic gold
+        color: '#FEF08A',
         shadowColor: '#000000',
         shadowBlur: 6,
         shadowOffsetX: 2,
@@ -236,7 +178,7 @@ async function main() {
       name: 'Neon Cyber Pulse',
       description: 'Electric violet neon glow tailored for gaming highlights and tech podcasts.',
       categorySlug: 'gaming',
-      isPremium: true,
+      isPremium: false,
       previewText: 'INSANE 1v5 CLUTCH WITH ZERO SECONDS LEFT!',
       tags: ['gaming', 'neon', 'streamer', 'twitch'],
       styleConfig: {
@@ -260,26 +202,26 @@ async function main() {
       },
     },
     {
-      slug: 'corporate-executive',
-      name: 'Executive Studio White',
-      description: 'Prestigious corporate aesthetic designed for keynote speeches and company updates.',
-      categorySlug: 'business',
+      slug: 'bold-impact-white',
+      name: 'Bold Impact White',
+      description: 'High-contrast white lettering with deep black drop shadow for social clips.',
+      categorySlug: 'bold',
       isPremium: false,
-      previewText: 'Revenue grew forty percent year over year across all regions.',
-      tags: ['corporate', 'conference', 'presentation', 'clean'],
+      previewText: 'STOP WASTING HOURS MANUAL CAPTIONING VIDEOS.',
+      tags: ['bold', 'tiktok', 'reels', 'impact'],
       styleConfig: {
-        fontFamily: 'Geist',
-        fontSize: 24,
-        fontWeight: '600',
-        color: '#0F172A',
-        backgroundColor: '#FFFFFF',
-        backgroundPadding: 12,
-        backgroundCornerRadius: 8,
+        fontFamily: 'Impact',
+        fontSize: 34,
+        fontWeight: '900',
+        color: '#FFFFFF',
+        textTransform: 'uppercase',
         textAlign: 'center',
-        positionPreset: 'bottom',
+        strokeColor: '#000000',
+        strokeWidth: 3,
+        positionPreset: 'middle',
       },
       animationConfig: {
-        type: 'slide-up',
+        type: 'pop-in',
         durationMs: 180,
       },
     },
@@ -296,9 +238,9 @@ async function main() {
         categoryId: catId,
         isPremium: t.isPremium,
         previewText: t.previewText,
-        tags: t.tags,
-        styleConfig: t.styleConfig,
-        animationConfig: t.animationConfig,
+        tags: JSON.stringify(t.tags),
+        styleConfig: JSON.stringify(t.styleConfig),
+        animationConfig: JSON.stringify(t.animationConfig),
       },
       create: {
         slug: t.slug,
@@ -307,37 +249,166 @@ async function main() {
         categoryId: catId,
         isPremium: t.isPremium,
         previewText: t.previewText,
-        tags: t.tags,
-        styleConfig: t.styleConfig,
-        animationConfig: t.animationConfig,
+        tags: JSON.stringify(t.tags),
+        styleConfig: JSON.stringify(t.styleConfig),
+        animationConfig: JSON.stringify(t.animationConfig),
       },
     });
   }
 
-  // 4. Optional: Seed initial system administrator only if explicitly requested
-  const adminEmail = process.env.SEED_ADMIN_EMAIL;
-  const adminPasswordHash = process.env.SEED_ADMIN_PASSWORD_HASH;
+  // 4. Seed Local Development Users (Parts 12 & 26)
+  console.log('Creating Local Development Users...');
 
-  if (adminEmail && adminPasswordHash) {
-    console.log(`Creating initial system administrator: ${adminEmail}...`);
-    await prisma.user.upsert({
-      where: { email: adminEmail },
-      update: {
-        role: UserRole.ADMIN,
-        status: UserStatus.ACTIVE,
-      },
-      create: {
-        email: adminEmail,
-        name: process.env.SEED_ADMIN_NAME || 'System Administrator',
-        passwordHash: adminPasswordHash,
-        role: UserRole.ADMIN,
-        status: UserStatus.ACTIVE,
-        emailVerified: new Date(),
-      },
+  // Admin Account (admin@gmail.com / admin123456)
+  const adminPasswordHash = await hashPassword('admin123456');
+  const adminUser = await prisma.user.upsert({
+    where: { email: 'admin@gmail.com' },
+    update: {
+      role: UserRole.ADMIN,
+      status: UserStatus.ACTIVE,
+      passwordHash: adminPasswordHash,
+    },
+    create: {
+      email: 'admin@gmail.com',
+      name: 'System Admin',
+      passwordHash: adminPasswordHash,
+      role: UserRole.ADMIN,
+      status: UserStatus.ACTIVE,
+    },
+  });
+
+  const adminWs = await prisma.workspace.upsert({
+    where: { slug: 'admin-workspace' },
+    update: {},
+    create: {
+      name: "Admin's Workspace",
+      slug: 'admin-workspace',
+    },
+  });
+
+  await prisma.workspaceMember.upsert({
+    where: { workspaceId_userId: { workspaceId: adminWs.id, userId: adminUser.id } },
+    update: { role: WorkspaceRole.OWNER },
+    create: {
+      workspaceId: adminWs.id,
+      userId: adminUser.id,
+      role: WorkspaceRole.OWNER,
+    },
+  });
+
+  await prisma.brandKit.upsert({
+    where: { workspaceId: adminWs.id },
+    update: {},
+    create: {
+      workspaceId: adminWs.id,
+      primaryColor: '#635BFF',
+      secondaryColor: '#111827',
+      accentColor: '#10B981',
+      fonts: JSON.stringify(['Inter', 'Montserrat']),
+    },
+  });
+
+  // Regular Creator Account (user@gmail.com / user123456)
+  const userPasswordHash = await hashPassword('user123456');
+  const regularUser = await prisma.user.upsert({
+    where: { email: 'user@gmail.com' },
+    update: {
+      role: UserRole.USER,
+      status: UserStatus.ACTIVE,
+      passwordHash: userPasswordHash,
+    },
+    create: {
+      email: 'user@gmail.com',
+      name: 'Local Creator',
+      passwordHash: userPasswordHash,
+      role: UserRole.USER,
+      status: UserStatus.ACTIVE,
+    },
+  });
+
+  const userWs = await prisma.workspace.upsert({
+    where: { slug: 'creator-workspace' },
+    update: {},
+    create: {
+      name: "Creator's Workspace",
+      slug: 'creator-workspace',
+    },
+  });
+
+  await prisma.workspaceMember.upsert({
+    where: { workspaceId_userId: { workspaceId: userWs.id, userId: regularUser.id } },
+    update: { role: WorkspaceRole.OWNER },
+    create: {
+      workspaceId: userWs.id,
+      userId: regularUser.id,
+      role: WorkspaceRole.OWNER,
+    },
+  });
+
+  await prisma.brandKit.upsert({
+    where: { workspaceId: userWs.id },
+    update: {},
+    create: {
+      workspaceId: userWs.id,
+      primaryColor: '#8B5CF6',
+      secondaryColor: '#0F172A',
+      accentColor: '#F59E0B',
+      fonts: JSON.stringify(['Inter', 'Playfair Display']),
+    },
+  });
+
+  // 5. Seed 3 Sample Local Projects
+  console.log('Creating Sample Local Projects...');
+  const sampleProjects = [
+    {
+      name: 'YouTube Shorts - 5 Editing Hacks',
+      description: 'Quick tips video with pop kinetic styling.',
+      status: ProjectStatus.READY,
+      durationSeconds: 45.2,
+      width: 1080,
+      height: 1920,
+      fps: 30,
+    },
+    {
+      name: 'Podcast Episode 12 - Highlights',
+      description: 'Audiogram clip formatted for Instagram Reels.',
+      status: ProjectStatus.READY,
+      durationSeconds: 62.0,
+      width: 1080,
+      height: 1920,
+      fps: 30,
+    },
+    {
+      name: 'Product Launch Teaser 4K',
+      description: 'Widescreen announcement teaser with Swiss clean subtitles.',
+      status: ProjectStatus.DRAFT,
+      durationSeconds: 30.5,
+      width: 3840,
+      height: 2160,
+      fps: 60,
+    },
+  ];
+
+  for (const sp of sampleProjects) {
+    const existing = await prisma.project.findFirst({
+      where: { workspaceId: userWs.id, name: sp.name },
     });
+    if (!existing) {
+      await prisma.project.create({
+        data: {
+          workspaceId: userWs.id,
+          ...sp,
+        },
+      });
+    }
   }
 
-  console.log('✅ CaptionStudio PRO System Database Seeding Completed Successfully! (Zero fake data seeded)');
+  console.log('\n✅ CaptionStudio PRO Local SQLite Database Seeding Completed Successfully!');
+  console.log('------------------------------------------------------------');
+  console.log('Default Accounts Created:');
+  console.log('  👑 Admin: admin@gmail.com / admin123456 (Role: ADMIN)');
+  console.log('  👤 User:  user@gmail.com  / user123456  (Role: USER)');
+  console.log('------------------------------------------------------------\n');
 }
 
 main()
@@ -348,4 +419,3 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
-

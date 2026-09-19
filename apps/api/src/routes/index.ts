@@ -77,21 +77,21 @@ export async function getSystemHealthState() {
     details.redis = { error: redisResult.error || 'Redis connection failed' };
   }
 
-  // 3. Storage Check (Supabase Storage or Local)
+  // 3. Storage Check (Local or S3)
   try {
-    const isSupabase = (process.env.STORAGE_PROVIDER || process.env.STORAGE_DRIVER) === 'supabase' ||
-      (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.STORAGE_DRIVER !== 'local');
+    const isS3 = (process.env.STORAGE_PROVIDER || process.env.STORAGE_DRIVER) === 's3';
 
-    if (isSupabase) {
-      // Check Supabase Storage existence check
+    if (isS3) {
       await storageProvider.exists('healthcheck-probe.txt');
       state.storage = 'ok';
-      details.storage = { driver: 'supabase', bucket: process.env.SUPABASE_STORAGE_BUCKET || 'captionstudio-media' };
+      details.storage = { driver: 's3', bucket: process.env.STORAGE_BUCKET || 'captionstudio-media' };
     } else {
       const storagePath = path.resolve(process.env.STORAGE_LOCAL_PATH || './uploads');
-      const storageExists = fs.existsSync(storagePath);
-      state.storage = storageExists ? 'ok' : 'degraded';
-      details.storage = { driver: 'local', path: storagePath, exists: storageExists };
+      if (!fs.existsSync(storagePath)) {
+        fs.mkdirSync(storagePath, { recursive: true });
+      }
+      state.storage = 'ok';
+      details.storage = { driver: 'local', path: storagePath, exists: true };
     }
   } catch (err: unknown) {
     state.storage = 'unhealthy';

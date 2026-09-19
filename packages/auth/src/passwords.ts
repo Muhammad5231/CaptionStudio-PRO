@@ -34,18 +34,4 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
   });
 }
 
-/**
- * Generates a cryptographically secure random token for password resets
- */
-export function generateResetToken(): string {
-  return crypto.randomBytes(32).toString('hex');
-}
-
-/**
- * Computes a secure SHA-256 hash of a reset token for safe database persistence
- */
-export function hashResetToken(token: string): string {
-  return crypto.createHash('sha256').update(token).digest('hex');
-}
-
 

@@ -14,7 +14,7 @@ import {
   UploadIntentStatus,
 } from '@captionstudio/database';
 import { createStorageProvider, StoragePaths } from '@captionstudio/storage';
-import { usageService } from '@captionstudio/billing';
+import { usageService } from '@captionstudio/billing/server';
 import { OutboxDispatcher } from '@captionstudio/queue';
 import { parseSRT, parseVTT, parseASS } from '@captionstudio/captions';
 import {
@@ -594,11 +594,11 @@ uploadsRouter.post('/complete', authenticate, async (req: Request, res: Response
             status: JobStatus.PENDING,
             progress: 0,
             stage: 'Enqueued for media analysis',
-            metadata: {
+            metadata: JSON.stringify({
               assetId: asset.id,
               storageKey: intent.storageKey,
               originalFileName: data.fileName || path.basename(intent.storageKey),
-            },
+            }),
           },
         });
 
@@ -607,7 +607,7 @@ uploadsRouter.post('/complete', authenticate, async (req: Request, res: Response
           data: {
             type: 'MEDIA_ANALYSIS',
             aggregateId: job.id,
-            payload: {
+            payload: JSON.stringify({
               jobId: job.id,
               userId: req.user!.id,
               workspaceId: intent.workspaceId,
@@ -616,7 +616,7 @@ uploadsRouter.post('/complete', authenticate, async (req: Request, res: Response
               storageKey: intent.storageKey,
               originalFileName: data.fileName || path.basename(intent.storageKey),
               type: JobType.MEDIA_ANALYSIS,
-            },
+            }),
           },
         });
 
@@ -755,7 +755,7 @@ uploadsRouter.post('/complete', authenticate, async (req: Request, res: Response
           data: {
             projectId: intent.projectId,
             versionNumber: nextVersionNum,
-            captionPayload: track as unknown as object,
+            captionPayload: typeof track === 'string' ? track : JSON.stringify(track),
             changelog: `Imported subtitle file: ${data.fileName || path.basename(intent.storageKey)}`,
           },
         });

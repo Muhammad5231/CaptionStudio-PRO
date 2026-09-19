@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { usageService } from '@captionstudio/billing';
+import { usageService } from '@captionstudio/billing/server';
 import { authenticate } from '../middlewares/auth.middleware';
 
 export const usageRouter = Router();

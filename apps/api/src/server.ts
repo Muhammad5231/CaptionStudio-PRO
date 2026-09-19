@@ -19,18 +19,6 @@ function validateServerEnvironment() {
     missing.push('DATABASE_URL');
   }
 
-  const storageProvider = (process.env.STORAGE_PROVIDER || process.env.STORAGE_DRIVER || '').toLowerCase();
-  if (storageProvider === 'supabase') {
-    if (!process.env.SUPABASE_URL) missing.push('SUPABASE_URL');
-    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) missing.push('SUPABASE_SERVICE_ROLE_KEY');
-  }
-
-  // Security check: ensure service role key is NEVER exposed in NEXT_PUBLIC_*
-  if (process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY) {
-    console.error('🚨 [CRITICAL SECURITY ERROR]: NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY detected! Service role keys must NEVER be prefixed with NEXT_PUBLIC_ or exposed to client bundles.');
-    process.exit(1);
-  }
-
   if (missing.length > 0) {
     console.error(`🚨 [Configuration Error] Missing required environment variables for current configuration: ${missing.join(', ')}`);
     if (process.env.NODE_ENV === 'production') {

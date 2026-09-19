@@ -85,8 +85,8 @@ projectsRouter.get('/', requireWorkspace(WorkspaceRole.VIEWER), async (req, res,
       ...(search
         ? {
             OR: [
-              { name: { contains: search, mode: 'insensitive' } },
-              { description: { contains: search, mode: 'insensitive' } },
+              { name: { contains: search } },
+              { description: { contains: search } },
             ],
           }
         : {}),
@@ -360,7 +360,7 @@ projectsRouter.post('/:id/duplicate', requireProjectAccess(WorkspaceRole.EDITOR)
           data: {
             projectId: newProj.id,
             versionNumber: 1,
-            captionPayload: source.versions[0].captionPayload as object,
+            captionPayload: source.versions[0].captionPayload,
             changelog: 'Cloned from project ' + source.id,
           },
         });
@@ -459,12 +459,12 @@ projectsRouter.post('/:id/transcribe', requireProjectAccess(WorkspaceRole.EDITOR
           status: JobStatus.PENDING,
           progress: 0,
           stage: 'Enqueued for transcription',
-          metadata: {
+          metadata: JSON.stringify({
             language,
             whisperModel,
             assetId: videoAsset.id,
             storageKey: videoAsset.storageKey,
-          },
+          }),
         },
       });
 
@@ -472,7 +472,7 @@ projectsRouter.post('/:id/transcribe', requireProjectAccess(WorkspaceRole.EDITOR
         data: {
           type: 'TRANSCRIPTION',
           aggregateId: createdJob.id,
-          payload: {
+          payload: JSON.stringify({
             jobId: createdJob.id,
             userId: req.user!.id,
             workspaceId: project.workspaceId,
@@ -481,7 +481,7 @@ projectsRouter.post('/:id/transcribe', requireProjectAccess(WorkspaceRole.EDITOR
             audioStorageKey: videoAsset.storageKey,
             language,
             whisperModel,
-          },
+          }),
         },
       });
 
@@ -556,7 +556,7 @@ projectsRouter.post('/:id/versions', requireProjectAccess(WorkspaceRole.EDITOR),
       data: {
         projectId,
         versionNumber: nextVersionNum,
-        captionPayload: captionPayload as object,
+        captionPayload: typeof captionPayload === 'string' ? captionPayload : JSON.stringify(captionPayload),
         changelog: changelog || `User edit (Version ${nextVersionNum})`,
       },
     });

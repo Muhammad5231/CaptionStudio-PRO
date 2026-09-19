@@ -3,57 +3,31 @@ import assert from 'node:assert';
 import path from 'node:path';
 import { z } from 'zod';
 import {
-  generateResetToken,
-  hashResetToken,
   hashPassword,
   verifyPassword,
+  generateSessionToken,
 } from '../packages/auth/src/index';
 import { MediaProbeService } from '../packages/media/src/index';
 import { parseSRT, parseVTT, parseASS } from '../packages/captions/src/index';
 import { UserStatus } from '../packages/database/src/index';
 
 describe('Phase 2 Hardening — Security, Media & Admin Guarantees', () => {
-  describe('Password Reset Cryptography & Security', () => {
-    it('should generate distinct 64-char hex reset tokens with deterministic SHA-256 hashes', () => {
-      const token1 = generateResetToken();
-      const token2 = generateResetToken();
+  describe('Password Security & Scrypt Hashes', () => {
+    it('should hash and verify passwords using scrypt with random salt', async () => {
+      const hash1 = await hashPassword('SecurePassword123');
+      const hash2 = await hashPassword('SecurePassword123');
 
-      assert.strictEqual(token1.length, 64);
-      assert.notStrictEqual(token1, token2);
-
-      const hash1a = hashResetToken(token1);
-      const hash1b = hashResetToken(token1);
-      const hash2 = hashResetToken(token2);
-
-      assert.strictEqual(hash1a, hash1b);
-      assert.notStrictEqual(hash1a, hash2);
-      assert.notStrictEqual(token1, hash1a);
+      assert.notStrictEqual(hash1, hash2); // Salts must differ
+      assert.strictEqual(await verifyPassword('SecurePassword123', hash1), true);
+      assert.strictEqual(await verifyPassword('WrongPassword', hash1), false);
     });
 
-    it('should correctly reject expired or already-used reset tokens', () => {
-      const validateToken = (token: { usedAt: Date | null; expiresAt: Date }) => {
-        if (token.usedAt !== null) return { valid: false, reason: 'TOKEN_ALREADY_USED' };
-        if (token.expiresAt.getTime() < Date.now()) return { valid: false, reason: 'TOKEN_EXPIRED' };
-        return { valid: true };
-      };
-
-      const validToken = {
-        usedAt: null,
-        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
-      };
-      assert.deepStrictEqual(validateToken(validToken), { valid: true });
-
-      const usedToken = {
-        usedAt: new Date(),
-        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
-      };
-      assert.deepStrictEqual(validateToken(usedToken), { valid: false, reason: 'TOKEN_ALREADY_USED' });
-
-      const expiredToken = {
-        usedAt: null,
-        expiresAt: new Date(Date.now() - 1000),
-      };
-      assert.deepStrictEqual(validateToken(expiredToken), { valid: false, reason: 'TOKEN_EXPIRED' });
+    it('should generate distinct cryptographically secure session tokens', () => {
+      const token1 = generateSessionToken();
+      const token2 = generateSessionToken();
+      assert.strictEqual(typeof token1, 'string');
+      assert.ok(token1.length >= 32);
+      assert.notStrictEqual(token1, token2);
     });
   });
 

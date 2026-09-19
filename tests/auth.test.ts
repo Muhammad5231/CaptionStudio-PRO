@@ -6,9 +6,9 @@ import {
   generateSessionToken,
   getExpressCookieOptions,
 } from '../packages/auth/src/index';
-import { SignUpSchema, LoginSchema } from '../packages/types/src/index';
+import { SignUpSchema, LoginSchema, GMAIL_REGEX } from '../packages/types/src/index';
 
-describe('Authentication & Session Security', () => {
+describe('Local Authentication & Session Security', () => {
   it('should hash and verify passwords using scrypt', async () => {
     const rawPassword = 'SecurePassword123!';
     const hash = await hashPassword(rawPassword);
@@ -52,30 +52,35 @@ describe('Authentication & Session Security', () => {
     assert.strictEqual(isExpired(futureDate), false);
   });
 
-  it('should reject invalid signup attempts with Zod validation', () => {
-    const invalidAttempt = {
-      name: 'A',
-      email: 'not-an-email',
-      password: 'weak',
-      termsAccepted: false,
-    };
+  it('should reject non-gmail emails and short passwords in SignUpSchema', () => {
+    // Non-gmail address
+    const nonGmail = SignUpSchema.safeParse({
+      name: 'Alex',
+      email: 'alex@captionstudio.io',
+      password: 'password123',
+    });
+    assert.strictEqual(nonGmail.success, false);
 
-    const result = SignUpSchema.safeParse(invalidAttempt);
-    assert.strictEqual(result.success, false);
+    // Short password (< 8 chars)
+    const shortPass = SignUpSchema.safeParse({
+      name: 'Alex',
+      email: 'alex@gmail.com',
+      password: 'short',
+    });
+    assert.strictEqual(shortPass.success, false);
   });
 
-  it('should accept valid signup and login payloads', () => {
+  it('should accept valid @gmail.com signup and login payloads', () => {
     const validSignup = {
       name: 'Alex Rivera',
-      email: 'alex@captionstudio.io',
+      email: 'alex.rivera@gmail.com',
       password: 'StrongPassword123!',
-      termsAccepted: true,
     };
     const signupResult = SignUpSchema.safeParse(validSignup);
     assert.strictEqual(signupResult.success, true);
 
     const validLogin = {
-      email: 'alex@captionstudio.io',
+      email: 'alex.rivera@gmail.com',
       password: 'StrongPassword123!',
       rememberMe: true,
     };
@@ -83,49 +88,14 @@ describe('Authentication & Session Security', () => {
     assert.strictEqual(loginResult.success, true);
   });
 
-  it('should generate cryptographically strong, random reset tokens and valid SHA-256 hashes', async () => {
-    const { generateResetToken, hashResetToken } = await import('../packages/auth/src/index');
+  it('should strictly validate Gmail addresses via GMAIL_REGEX', () => {
+    assert.ok(GMAIL_REGEX.test('user@gmail.com'));
+    assert.ok(GMAIL_REGEX.test('user.name+tag@gmail.com'));
+    assert.ok(GMAIL_REGEX.test('USER123@GMAIL.COM'));
 
-    const rawToken1 = generateResetToken();
-    const rawToken2 = generateResetToken();
-
-    assert.strictEqual(typeof rawToken1, 'string');
-    assert.strictEqual(rawToken1.length, 64); // 32 bytes hex
-    assert.notStrictEqual(rawToken1, rawToken2);
-
-    const hash1 = hashResetToken(rawToken1);
-    const hash2 = hashResetToken(rawToken1);
-    const hashDifferent = hashResetToken(rawToken2);
-
-    assert.strictEqual(hash1, hash2); // Deterministic
-    assert.notStrictEqual(hash1, hashDifferent);
-    assert.notStrictEqual(rawToken1, hash1); // Never store raw token
-  });
-
-  it('should enforce single-use and expiration on password reset tokens', () => {
-    const isTokenValid = (token: { usedAt: Date | null; expiresAt: Date }) => {
-      if (token.usedAt !== null) return false; // Already used
-      if (token.expiresAt < new Date()) return false; // Expired
-      return true;
-    };
-
-    const activeToken = {
-      usedAt: null,
-      expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 mins left
-    };
-    assert.strictEqual(isTokenValid(activeToken), true);
-
-    const usedToken = {
-      usedAt: new Date(),
-      expiresAt: new Date(Date.now() + 15 * 60 * 1000),
-    };
-    assert.strictEqual(isTokenValid(usedToken), false);
-
-    const expiredToken = {
-      usedAt: null,
-      expiresAt: new Date(Date.now() - 1000), // Expired 1s ago
-    };
-    assert.strictEqual(isTokenValid(expiredToken), false);
+    assert.strictEqual(GMAIL_REGEX.test('user@yahoo.com'), false);
+    assert.strictEqual(GMAIL_REGEX.test('user@outlook.com'), false);
+    assert.strictEqual(GMAIL_REGEX.test('user@company.io'), false);
+    assert.strictEqual(GMAIL_REGEX.test('user@notgmail.com'), false);
   });
 });
-

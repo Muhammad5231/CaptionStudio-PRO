@@ -4,6 +4,16 @@
   "private": true,
   "main": "./src/index.ts",
   "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./server": {
+      "types": "./src/usage.service.ts",
+      "default": "./src/usage.service.ts"
+    }
+  },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },

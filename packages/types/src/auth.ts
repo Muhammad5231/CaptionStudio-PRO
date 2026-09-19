@@ -28,7 +28,6 @@ export interface UserProfile {
   avatarUrl: string | null;
   role: UserRole;
   status: UserStatus;
-  emailVerified: Date | null;
   timezone: string;
   language: string;
   createdAt: Date;
@@ -51,48 +50,28 @@ export interface JWTPayload {
   exp: number;
 }
 
+export const GMAIL_REGEX = /^[A-Za-z0-9._%+-]+@gmail\.com$/i;
+
 // Zod validation schemas
 export const SignUpSchema = z.object({
-  name: z.string().min(2, 'Name must be at least 2 characters').max(100),
-  email: z.string().email('Please provide a valid email address'),
+  name: z.string().min(2, 'Name must be at least 2 characters').max(100).optional(),
+  email: z
+    .string()
+    .regex(GMAIL_REGEX, 'Only @gmail.com email addresses are allowed'),
   password: z
     .string()
-    .min(8, 'Password must be at least 8 characters')
-    .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
-    .regex(/[0-9]/, 'Password must contain at least one number'),
-  termsAccepted: z.literal(true, {
-    errorMap: () => ({ message: 'You must accept the terms of service' }),
-  }),
+    .min(8, 'Password must be at least 8 characters'),
 });
 
 export type SignUpDto = z.infer<typeof SignUpSchema>;
 
 export const LoginSchema = z.object({
-  email: z.string().email('Please enter a valid email address'),
+  email: z
+    .string()
+    .regex(GMAIL_REGEX, 'Only @gmail.com email addresses are allowed'),
   password: z.string().min(1, 'Password is required'),
   rememberMe: z.boolean().optional().default(false),
 });
 
 export type LoginDto = z.infer<typeof LoginSchema>;
-
-export const ForgotPasswordSchema = z.object({
-  email: z.string().email('Please enter a valid email address'),
-});
-
-export type ForgotPasswordDto = z.infer<typeof ForgotPasswordSchema>;
-
-export const ResetPasswordSchema = z.object({
-  token: z.string().min(1, 'Reset token is required'),
-  password: z
-    .string()
-    .min(8, 'Password must be at least 8 characters')
-    .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
-    .regex(/[0-9]/, 'Password must contain at least one number'),
-  confirmPassword: z.string().min(1, 'Please confirm your password'),
-}).refine((data) => data.password === data.confirmPassword, {
-  message: 'Passwords do not match',
-  path: ['confirmPassword'],
-});
-
-export type ResetPasswordDto = z.infer<typeof ResetPasswordSchema>;
 

@@ -28,9 +28,7 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
-  signup: (data: SignUpDto) => Promise<{ email: string; status: string; message: string }>;
-  verifyEmail: (token: string) => Promise<{ success: boolean; message: string }>;
-  resendVerification: (email: string) => Promise<{ success: boolean; message: string }>;
+  signup: (data: SignUpDto) => Promise<void>;
   logout: () => Promise<void>;
   setActiveWorkspace: (ws: WorkspaceSummary) => void;
   refreshUser: () => Promise<void>;
@@ -102,28 +100,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const res = await api.post<{
       success: boolean;
       data: {
-        email: string;
-        status: string;
-      };
-      message: string;
-    }>('/auth/signup', data);
-
-    return {
-      email: res.data?.email || data.email,
-      status: res.data?.status || 'PENDING_VERIFICATION',
-      message: res.message || 'Verification email sent. Please check your inbox.',
-    };
-  };
-
-  const verifyEmail = async (token: string) => {
-    const res = await api.post<{
-      success: boolean;
-      data: {
         user: AuthUser;
         workspace: WorkspaceSummary | null;
       };
       message: string;
-    }>('/auth/verify-email', { token });
+    }>('/auth/signup', data);
 
     if (res.data?.user) {
       setUser(res.data.user);
@@ -133,15 +114,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       await refreshUser();
     }
-    return { success: true, message: res.message || 'Email verified successfully!' };
-  };
-
-  const resendVerification = async (email: string) => {
-    const res = await api.post<{
-      success: boolean;
-      message: string;
-    }>('/auth/resend-verification', { email });
-    return { success: true, message: res.message || 'Verification email sent.' };
   };
 
   const logout = async () => {
@@ -166,8 +138,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isAuthenticated: Boolean(user),
         login,
         signup,
-        verifyEmail,
-        resendVerification,
         logout,
         setActiveWorkspace: setWorkspace,
         refreshUser,

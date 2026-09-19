@@ -18,15 +18,19 @@ async function updateJobState(
     progress?: number;
     stage?: string;
     errorMessage?: string | null;
-    metadata?: Prisma.InputJsonValue;
+    metadata?: any;
     completedAt?: Date;
     startedAt?: Date;
   }
 ) {
   try {
+    const updateData: any = { ...data };
+    if (data.metadata !== undefined) {
+      updateData.metadata = typeof data.metadata === 'string' ? data.metadata : JSON.stringify(data.metadata);
+    }
     await prisma.exportJob.update({
       where: { id: jobId },
-      data,
+      data: updateData,
     });
   } catch (err) {
     console.error(`[MediaAnalysis Worker] Failed to update DB state for job ${jobId}:`, err);

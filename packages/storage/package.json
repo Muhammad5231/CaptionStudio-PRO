@@ -8,8 +8,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@captionstudio/types": "workspace:*",
-    "@supabase/supabase-js": "^2.45.4"
+    "@captionstudio/types": "workspace:*"
   },
   "devDependencies": {
     "@captionstudio/config": "workspace:*",

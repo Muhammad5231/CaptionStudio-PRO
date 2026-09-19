@@ -40,6 +40,11 @@ Thumbs.db
 /storage/
 /temp/
 /scratch/
+/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 
 # Binaries
 *.exe
