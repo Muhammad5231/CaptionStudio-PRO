@@ -31,95 +31,123 @@ apiV1Router.use('/usage', usageRouter);
 apiV1Router.use('/billing', billingRouter);
 apiV1Router.use('/admin', adminRouter);
 
-/**
- * Basic liveness probe
- */
-apiV1Router.get('/health', (_req, res) => {
-  res.json({
-    status: 'healthy',
-    version: '1.0.0',
-    timestamp: new Date().toISOString(),
-  });
-});
+import { createStorageProvider } from '@captionstudio/storage';
 
-/**
- * Deep dependency health inspection
- */
-apiV1Router.get('/health/dependencies', async (_req, res) => {
-  const checks: Record<string, { status: 'healthy' | 'degraded' | 'unhealthy'; details?: any; error?: string }> = {};
+const storageProvider = createStorageProvider();
 
-  // 1. PostgreSQL Check
+export async function getSystemHealthState() {
+  const state: {
+    api: string;
+    database: string;
+    redis: string;
+    storage: string;
+    ffmpeg: string;
+    ffprobe: string;
+    worker: string;
+  } = {
+    api: 'ok',
+    database: 'unhealthy',
+    redis: 'unhealthy',
+    storage: 'unhealthy',
+    ffmpeg: 'unhealthy',
+    ffprobe: 'unhealthy',
+    worker: 'unhealthy',
+  };
+
+  const details: Record<string, any> = {};
+
+  // 1. PostgreSQL / Supabase Check
   try {
     const start = Date.now();
     await prisma.$queryRaw`SELECT 1`;
-    checks.postgres = {
-      status: 'healthy',
-      details: { latencyMs: Date.now() - start },
-    };
+    state.database = 'ok';
+    details.database = { latencyMs: Date.now() - start };
   } catch (err: unknown) {
-    checks.postgres = {
-      status: 'unhealthy',
-      error: err instanceof Error ? err.message : 'Database query failed',
-    };
+    state.database = 'unhealthy';
+    details.database = { error: err instanceof Error ? err.message : 'Database query failed' };
   }
 
-  // 2. Redis Check
+  // 2. Redis Check (Managed Redis)
   const redisResult = await checkRedisHealth();
-  checks.redis = {
-    status: redisResult.isConnected ? 'healthy' : 'unhealthy',
-    details: { latencyMs: redisResult.latencyMs, redisStatus: redisResult.status },
-    error: redisResult.error || undefined,
-  };
+  if (redisResult.isConnected) {
+    state.redis = 'ok';
+    details.redis = { latencyMs: redisResult.latencyMs, status: redisResult.status };
+  } else {
+    state.redis = 'unhealthy';
+    details.redis = { error: redisResult.error || 'Redis connection failed' };
+  }
 
-  // 3. Storage Check
-  const storagePath = path.resolve(process.env.STORAGE_LOCAL_PATH || './uploads');
-  const storageExists = fs.existsSync(storagePath);
-  checks.storage = {
-    status: storageExists ? 'healthy' : 'degraded',
-    details: { driver: process.env.STORAGE_DRIVER || 'local', path: storagePath },
-    error: storageExists ? undefined : 'Local upload directory does not exist yet',
-  };
+  // 3. Storage Check (Supabase Storage or Local)
+  try {
+    const isSupabase = (process.env.STORAGE_PROVIDER || process.env.STORAGE_DRIVER) === 'supabase' ||
+      (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.STORAGE_DRIVER !== 'local');
 
-  // 4. FFmpeg / FFprobe Check
+    if (isSupabase) {
+      // Check Supabase Storage existence check
+      await storageProvider.exists('healthcheck-probe.txt');
+      state.storage = 'ok';
+      details.storage = { driver: 'supabase', bucket: process.env.SUPABASE_STORAGE_BUCKET || 'captionstudio-media' };
+    } else {
+      const storagePath = path.resolve(process.env.STORAGE_LOCAL_PATH || './uploads');
+      const storageExists = fs.existsSync(storagePath);
+      state.storage = storageExists ? 'ok' : 'degraded';
+      details.storage = { driver: 'local', path: storagePath, exists: storageExists };
+    }
+  } catch (err: unknown) {
+    state.storage = 'unhealthy';
+    details.storage = { error: err instanceof Error ? err.message : 'Storage check failed' };
+  }
+
+  // 4. FFmpeg Check
   try {
     const ffmpegVer = await ffmpegService.getVersion();
-    checks.ffmpeg = {
-      status: 'healthy',
-      details: { version: ffmpegVer.split('\n')[0] },
-    };
+    state.ffmpeg = 'ok';
+    details.ffmpeg = { version: ffmpegVer.split('\n')[0] };
   } catch (err: unknown) {
-    checks.ffmpeg = {
-      status: 'degraded',
-      error: err instanceof Error ? err.message : 'FFmpeg execution check failed',
-    };
+    state.ffmpeg = 'degraded';
+    details.ffmpeg = { error: err instanceof Error ? err.message : 'FFmpeg check failed' };
   }
 
-  // 5. Python / Whisper Environment Check
-  const pythonPath = process.env.PYTHON_PATH || (process.platform === 'win32' ? 'python' : 'python3');
+  // 5. FFprobe Check
   try {
-    const { stdout } = await execFileAsync(pythonPath, ['-c', 'import whisper; print("whisper_ok")'], {
-      timeout: 4000,
-    });
-    checks.whisper = {
-      status: stdout.includes('whisper_ok') ? 'healthy' : 'degraded',
-      details: { pythonPath },
-    };
+    const { stdout } = await execFileAsync(ffmpegService.getFfprobePath(), ['-version']);
+    state.ffprobe = 'ok';
+    details.ffprobe = { version: stdout.split('\n')[0] };
   } catch (err: unknown) {
-    checks.whisper = {
-      status: 'degraded',
-      details: { pythonPath },
-      error: err instanceof Error ? err.message : 'Whisper python library import check failed',
-    };
+    state.ffprobe = 'degraded';
+    details.ffprobe = { error: err instanceof Error ? err.message : 'FFprobe check failed' };
   }
 
-  const allHealthy = Object.values(checks).every((c) => c.status === 'healthy');
-  const hasUnhealthy = Object.values(checks).some((c) => c.status === 'unhealthy');
+  // 6. Worker Check (tied to Redis & Queue accessibility)
+  if (redisResult.isConnected) {
+    state.worker = 'ok';
+    details.worker = { status: 'ready', queueDriver: 'bullmq' };
+  } else {
+    state.worker = 'unhealthy';
+    details.worker = { error: 'Worker queue paused: Redis unavailable' };
+  }
 
-  const statusCode = allHealthy ? 200 : hasUnhealthy ? 503 : 200;
+  const isHealthy = Object.values(state).every((v) => v === 'ok');
+  return { state, details, isHealthy };
+}
 
-  res.status(statusCode).json({
-    status: allHealthy ? 'healthy' : hasUnhealthy ? 'unhealthy' : 'degraded',
-    dependencies: checks,
+/**
+ * Basic & standardized liveness probe (Part 22)
+ */
+apiV1Router.get('/health', async (_req, res) => {
+  const { state, isHealthy } = await getSystemHealthState();
+  res.status(isHealthy ? 200 : 503).json(state);
+});
+
+/**
+ * Deep dependency health inspection (Part 22)
+ */
+apiV1Router.get('/health/dependencies', async (_req, res) => {
+  const { state, details, isHealthy } = await getSystemHealthState();
+  res.status(isHealthy ? 200 : 503).json({
+    status: isHealthy ? 'healthy' : 'degraded',
+    state,
+    dependencies: details,
     timestamp: new Date().toISOString(),
   });
 });

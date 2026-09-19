@@ -1,12 +1,12 @@
-# CaptionStudio PRO — SaaS Platform (Phase 1 & Phase 2)
+# CaptionStudio PRO — Modern Cloud Infrastructure (Supabase & Managed Redis)
 
 > **CaptionStudio PRO** is a commercial-grade, web-based video caption and subtitle creation SaaS platform designed for high-growth video creators, podcasters, and media production agencies.
 
 ---
 
-## Architecture Overview
+## Target Architecture
 
-CaptionStudio PRO is organized as a high-performance TypeScript monorepo powered by **Turborepo** and **pnpm workspaces**.
+CaptionStudio PRO is organized as a high-performance TypeScript monorepo powered by **Turborepo** and **pnpm workspaces**. The platform runs entirely cloud-native without requiring local Docker containers for core databases or object storage.
 
 ```mermaid
 flowchart TD
@@ -14,248 +14,253 @@ flowchart TD
         Landing["Marketing Site"]
         Auth["Authentication UI"]
         Dashboard["SaaS Shell (/dashboard)"]
-        Editor["Timeline Workspace"]
+        Editor["Timeline Studio (/editor/:id)"]
         AdminUI["Admin Panel (/admin)"]
     end
 
+    subgraph DirectUpload ["Direct Signed Upload"]
+        UploadDirect["Direct HTTP PUT via Signed Upload URL"]
+    end
+
     subgraph API ["Backend API (apps/api)"]
-        AuthRoute["/api/v1/auth"]
-        ProjectRoute["/api/v1/projects"]
-        TemplateRoute["/api/v1/templates"]
-        ExportRoute["/api/v1/exports"]
-        AdminRoute["/api/v1/admin"]
+        AuthRoute["/api/v1/auth (Custom Session & Password Scrypt)"]
+        UploadRoute["/api/v1/uploads (Server-generated UploadIntents)"]
+        ProjectRoute["/api/v1/projects (Versioning & Metadata)"]
+        JobsRoute["/api/v1/jobs (SSE Progress Streams)"]
+        AdminRoute["/api/v1/admin (Postgres & Redis Live Metrics)"]
+        HealthRoute["/health & /health/dependencies"]
     end
 
-    subgraph Broker ["Message Broker & Queues"]
-        Redis[(Redis 7)]
-        STTQueue["transcription-queue"]
-        BurnQueue["export-render-queue"]
+    subgraph SupabaseCloud ["Supabase Cloud Platform"]
+        SupabasePostgres[(Supabase PostgreSQL 16 via Prisma)]
+        SupabasePooler["Supavisor Connection Pooler (Port 6543)"]
+        SupabaseStorage["Supabase Storage (Private Media Bucket)"]
     end
 
-    subgraph Processing ["Workers (apps/worker)"]
+    subgraph Broker ["Managed Redis & BullMQ"]
+        ManagedRedis[(Managed Redis Cloud / Upstash / Aiven)]
+        AnalysisQueue["media-analysis Queue"]
+        TranscribeQueue["transcription Queue"]
+    end
+
+    subgraph Workers ["Background Worker Services (apps/worker)"]
         WorkerService["BullMQ Worker Daemon"]
-        WhisperASR["Whisper Speech-to-Text"]
-        FFmpegEng["FFmpeg Subtitle Burner"]
+        FFmpegProbe["FFprobe Media Stream Inspector"]
+        WhisperASR["Whisper AI Speech-to-Text Engine"]
     end
 
-    subgraph Storage ["Persistent State"]
-        Postgres[(PostgreSQL 16 DB)]
-        S3Bucket[(S3 Object Storage)]
-    end
-
-    Client -->|HTTP / JSON| API
-    API -->|Prisma ORM| Postgres
-    API -->|Dispatch Jobs| Redis
-    Redis --> STTQueue
-    Redis --> BurnQueue
-    WorkerService -->|Pop Tasks| Redis
-    WorkerService -->|Extract & Transcribe| WhisperASR
-    WorkerService -->|Burn & Transcode| FFmpegEng
-    WorkerService -->|Read/Write Media| S3Bucket
-    WorkerService -->|Log Usage & Exports| Postgres
+    Client -->|HTTP / REST API| API
+    Client -->|Signed Upload (Bypasses API)| UploadDirect
+    UploadDirect -->|Stores Raw Media| SupabaseStorage
+    API -->|Session & User Queries| SupabasePooler
+    SupabasePooler --> SupabasePostgres
+    API -->|Generate Signed URLs & Probe| SupabaseStorage
+    API -->|Enqueue Jobs| ManagedRedis
+    ManagedRedis --> AnalysisQueue
+    ManagedRedis --> TranscribeQueue
+    WorkerService -->|Process Tasks| ManagedRedis
+    WorkerService -->|Fetch Media via Temp Stream| SupabaseStorage
+    WorkerService -->|Deep Stream Inspection| FFmpegProbe
+    WorkerService -->|Word-Level Timestamps| WhisperASR
+    WorkerService -->|Record Usage & Assets| SupabasePooler
 ```
 
 ---
 
-## Monorepo Folder Structure
+## Infrastructure Overview
+
+| Infrastructure Component | Provider | Configuration / Role |
+| :--- | :--- | :--- |
+| **Relational Database** | **Supabase PostgreSQL 16** | Backed by Prisma ORM with Supavisor transaction pooler (`DATABASE_URL`) and direct migration connection (`DIRECT_URL`). |
+| **Object Storage** | **Supabase Storage** | Server-controlled private bucket (`captionstudio-media`) with time-limited signed upload & download URLs. |
+| **Message Queue / Cache** | **Managed Redis** | BullMQ queue broker compatible with Upstash, Redis Cloud, Aiven, or any Redis 7+ instance via `REDIS_URL` (supports `rediss://` TLS). |
+| **Media Engines** | **Host / System Binaries** | Native FFmpeg, FFprobe, and Python OpenAI Whisper for local AI speech transcription. |
+| **Docker** | **Optional** | Retained strictly as an optional offline development alternative. **Docker Desktop is NOT required.** |
+
+---
+
+## Monorepo Workspace Structure
 
 ```
 CaptionStudio PRO/
 ├── apps/
-│   ├── web/                     # Next.js 14 App Router (Marketing, Auth, Dashboard, Admin)
-│   ├── api/                     # Modular Node.js / Express REST API (/api/v1)
-│   └── worker/                  # BullMQ background processing worker daemon
+│   ├── web/                     # Next.js 14 App Router (Marketing, Auth, Studio Editor, Dashboard, Admin)
+│   ├── api/                     # Express REST API (/api/v1, /health, /health/dependencies)
+│   └── worker/                  # BullMQ background processing worker daemon (FFprobe & Whisper STT)
 │
 ├── packages/
+│   ├── database/                # Prisma ORM schema, migrations, system seed script
+│   ├── storage/                 # StorageProvider abstraction (SupabaseStorageProvider & LocalStorageProvider)
+│   ├── queue/                   # Managed Redis connection, BullMQ queue definitions, job contracts
+│   ├── captions/                # Defensive parsers (SRT, WebVTT, ASS), timing tokenizers, serializers
+│   ├── media/                   # FFmpeg abstractions, media probe, audio extraction
+│   ├── auth/                    # Scrypt password hashing, session tokens, RBAC permissions
+│   ├── billing/                 # Idempotent UsageService, plan quotas, usage ledger math
 │   ├── ui/                      # Shared design tokens & Radix UI primitives
-│   ├── database/                # Prisma ORM schema, client singleton, seed scripts
-│   ├── auth/                    # Scrypt password hashing, session guards, RBAC
-│   ├── captions/                # Parsers (SRT, VTT, ASS), tokenizers, groupers, serializers
-│   ├── media/                   # FFmpeg abstractions, probe, audio extraction, transcoding
-│   ├── storage/                 # StorageProvider abstraction (Local FS & S3-compatible)
-│   ├── billing/                 # Plan definitions, quotas, usage ledger math
-│   ├── queue/                   # BullMQ queue definitions and job contracts
-│   ├── config/                  # Shared base tsconfig and tailwind configurations
-│   └── types/                   # Shared domain interfaces, DTOs, Zod schemas
+│   ├── config/                  # Shared tsconfig and tailwind configurations
+│   └── types/                   # Shared domain interfaces, DTOs, and Zod schemas
 │
-├── infrastructure/
-│   └── docker/                  # Service Dockerfiles
-│
-├── docs/                        # Complete technical and architectural documentation
-│   ├── architecture.md
-│   ├── database.md
-│   ├── authentication.md
-│   ├── storage.md
-│   ├── api.md
-│   ├── jobs.md
-│   ├── captions.md
-│   ├── deployment.md
-│   └── security.md
-│
-├── tests/                       # Monorepo test suites
-│   ├── captions.test.ts
-│   ├── billing.test.ts
-│   ├── rbac.test.ts
-│   └── auth.test.ts
-│
-├── docker-compose.yml           # Local PostgreSQL, Redis, MinIO infrastructure
-├── package.json                 # Monorepo root package.json
-├── pnpm-workspace.yaml          # Workspaces definition
-├── turbo.json                   # Turborepo task pipeline
-├── .env.example                 # Environment variable template
-└── README.md                    # Root project documentation
+├── tests/                       # Monorepo automated test suite (83+ unit and integration tests)
+├── docker-compose.yml           # Optional offline local infrastructure
+└── .env.example                 # Cloud-ready environment variable template
 ```
 
 ---
 
-## Technology Stack
+## Cloud Setup Guide (Supabase + Managed Redis)
 
-- **Frontend**: Next.js 14, React 18, TypeScript, Tailwind CSS, Lucide Icons, React Hook Form, Zod, Zustand, TanStack Query, NextThemes.
-- **Backend & API**: Node.js, Express, TypeScript, Zod validation, RFC 7807 problem details.
-- **Database & State**: PostgreSQL 16, Prisma ORM, Redis 7 (BullMQ broker).
-- **Media & Processing**: FFmpeg command abstraction, Whisper AI 16kHz mono audio pipeline, ASS/SSA subtitle engine.
-- **Storage**: Unified `IStorageProvider` interface supporting local filesystem and S3/MinIO/Cloudflare R2.
-- **Security**: Scrypt password hashing, timing-safe equality, RBAC, input sanitization, HTTP-only secure session cookies.
+Follow these steps to configure your environment without running Docker:
 
----
+### 1. Create a Supabase Project
+1. Navigate to [Supabase](https://supabase.com) and create a new project.
+2. In the project dashboard, navigate to **Project Settings** > **Database** > **Connection string**:
+   * **Connection Pooling (Transaction mode - port 6543)**: Copy this string for `DATABASE_URL` (add `?pgbouncer=true&connection_limit=10`).
+   * **Direct Connection (Session mode - port 5432)**: Copy this string for `DIRECT_URL`.
+3. In the left navigation, open **Storage**:
+   * Click **New Bucket**.
+   * Name the bucket: `captionstudio-media`.
+   * Ensure **Public bucket** is turned **OFF** (all user media is strictly private).
+4. In **Project Settings** > **API**:
+   * Copy the **Project URL** (`https://[PROJECT-REF].supabase.co`).
+   * Copy the **`service_role`** key (keep this secret; only used in server/worker environments).
 
-## Local Development Setup
+### 2. Configure Managed Redis
+1. Create a Redis database on [Upstash](https://upstash.com), [Redis Cloud](https://redis.io), or [Aiven](https://aiven.io).
+2. Copy the connection URL (`rediss://...`). Upstash and cloud providers natively use TLS.
 
-### 1. Prerequisites
-- **Node.js**: v18.0.0 or later (v20+ recommended)
-- **pnpm**: v9.0.0 or later
-- **Docker**: For PostgreSQL, Redis, and MinIO (optional if using external instances)
-
-### 2. Install Dependencies
-```bash
-pnpm install
-```
-
-### 3. Environment Configuration
+### 3. Configure Local Environment
 Copy `.env.example` to `.env`:
+
 ```bash
 cp .env.example .env
 ```
 
-### 4. Start Local Infrastructure (Docker)
-```bash
-docker-compose up -d
-```
-This launches:
-- **PostgreSQL**: `localhost:5432`
-- **Redis**: `localhost:6379`
-- **MinIO S3**: `localhost:9000` (Console at `localhost:9001`)
+Populate your `.env` file with the cloud credentials:
 
-### 5. Database Migration & Realistic Seeding
+```env
+# Database (Supabase)
+DATABASE_PROVIDER=supabase
+DATABASE_URL="postgresql://postgres.[REF]:[PASS]@aws-0-[REGION].pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=10"
+DIRECT_URL="postgresql://postgres.[REF]:[PASS]@aws-0-[REGION].pooler.supabase.com:5432/postgres"
+
+# Storage (Supabase)
+STORAGE_PROVIDER=supabase
+SUPABASE_URL="https://[REF].supabase.co"
+SUPABASE_SERVICE_ROLE_KEY="eyJh...[YOUR_SERVICE_ROLE_SECRET]"
+SUPABASE_STORAGE_BUCKET="captionstudio-media"
+
+# Redis (Managed Cloud)
+QUEUE_PROVIDER=redis
+REDIS_URL="rediss://default:[PASS]@[HOST].upstash.io:6379"
+
+# System binaries (adjust if custom path)
+FFMPEG_PATH=ffmpeg
+FFPROBE_PATH=ffprobe
+PYTHON_PATH=python
+WHISPER_MODEL=base
+```
+
+### 4. Push Database Schema & Seed System Templates
+Run Prisma to synchronize your database tables and seed production caption templates:
+
 ```bash
+# Push schema to Supabase PostgreSQL
 pnpm db:push
+
+# Seed subscription plans (Free, Creator, Pro, Business) and 16 production templates
 pnpm db:seed
 ```
-Seeds realistic plans (Free, Creator, Pro, Business), 50+ templates, demo user `alex.creator@captionstudio.io`, workspace, and sample projects.
 
-### 6. Run All Monorepo Services
-```bash
-pnpm dev
-```
-- **Web Application**: [http://localhost:3000](http://localhost:3000)
-- **API Server**: [http://localhost:4000](http://localhost:4000)
-- **Background Worker**: Running BullMQ queue listeners
+> **Visual Database GUI**: You can inspect your Supabase tables at any time using Prisma Studio:
+> ```bash
+> pnpm db:studio
+> ```
+> Opens an interactive web manager at `http://localhost:5555`.
 
 ---
 
-## Testing & Quality Assurance
+## Running the Application (Docker Desktop OFF)
 
-Run the test suite across caption parsing, billing quotas, RBAC authorization, and password cryptography:
+With your Supabase and Managed Redis credentials configured, you can start the entire platform with **Docker Desktop completely shut down**:
+
+```bash
+# Terminal 1: Run all services concurrently (Web, API, Worker)
+pnpm dev
+
+# Or start services individually:
+pnpm --filter @captionstudio/web dev     # Next.js frontend (port 3000)
+pnpm --filter @captionstudio/api dev     # Express API (port 4000)
+pnpm --filter @captionstudio/worker dev  # Background workers
+```
+
+- **Web Studio**: [http://localhost:3000](http://localhost:3000)
+- **API Server**: [http://localhost:4000](http://localhost:4000)
+- **Health Check**: [http://localhost:4000/health](http://localhost:4000/health)
+- **Dependency Diagnostics**: [http://localhost:4000/health/dependencies](http://localhost:4000/health/dependencies)
+
+---
+
+## Health Check Specifications
+
+`GET /health` returns standardized JSON with real dependency status:
+
+```json
+{
+  "api": "ok",
+  "database": "ok",
+  "redis": "ok",
+  "storage": "ok",
+  "ffmpeg": "ok",
+  "ffprobe": "ok",
+  "worker": "ok"
+}
+```
+
+`GET /health/dependencies` returns deep diagnostics including query latency and driver details.
+
+---
+
+## Optional: Offline Local Development (Docker)
+
+If you need to work completely offline without an internet connection, you can optionally launch local PostgreSQL, Redis, and MinIO via Docker Compose:
+
+```bash
+docker compose up -d
+```
+
+When using local Docker:
+* Set `DATABASE_URL="postgresql://captionstudio:captionstudio_dev_password@localhost:5432/captionstudio_db?schema=public"`
+* Set `STORAGE_PROVIDER=local`
+* Set `REDIS_URL="redis://localhost:6379"`
+
+---
+
+## Quality Assurance & Automated Testing
+
+Run the automated test suite across security, storage, subtitle parsing, Whisper STT, and billing:
+
 ```bash
 pnpm test
 ```
 
-Run TypeScript compilation check across all packages and applications:
+Run TypeScript compilation verification across all 12 workspace packages:
+
 ```bash
 pnpm typecheck
 ```
 
----
+Run production build:
+
+```bash
+pnpm build
+```
 
 ---
 
-## Phase 2 Status & Hardening Summary
+## Security Guarantees
 
-### Implemented
-- **Real PostgreSQL Database**: Production connection and 22 relational models managed with Prisma ORM.
-- **Real Authentication & Sessions**: Native `crypto.scrypt` password hashing, timing-safe equality, 32-byte cryptographically secure session rotation.
-- **HTTP-Only Cookies**: Protected `cs_session` cookies (`SameSite=Lax`, `Secure`, `HttpOnly`).
-- **Workspace Isolation & RBAC**: Tenant isolation with `OWNER`, `ADMIN`, `EDITOR`, and `VIEWER` roles.
-- **Project CRUD & IDOR Guard**: Project creation, listing, duplicate, archive, delete, and IDOR prevention middleware.
-- **Upload Architecture**: Direct signed upload URLs, multi-tenant path isolation (`workspaces/{wId}/projects/{pId}/{type}/{fileId}.{ext}`).
-- **Pluggable Storage Abstraction**: `LocalStorageProvider` (dev/self-hosted) and `S3StorageProvider` (AWS S3, MinIO, Cloudflare R2).
-- **BullMQ Queue Infrastructure**: Redis-backed queues (`captionstudio-media-analysis`, `captionstudio-transcription`, `captionstudio-export`).
-- **Server-Sent Events (SSE)**: Real-time progress updates on `/api/v1/jobs/:id/events` with connection teardown on terminal states.
-- **Subtitle Parsing Engine**: Defensive parsers for SRT, WebVTT, and ASS formats with word-level interpolation.
-- **Audit Logging**: Non-blocking asynchronous security and resource action logging.
-
-### Hardened (Critical Production Fixes)
-- **Real Password Reset**:
-  - `PasswordResetToken` table with single-use enforcement, 30-minute expiration, and SHA-256 token hashing.
-  - Zero raw token exposure in database.
-  - Generic `/forgot-password` response prevents user enumeration.
-  - Revokes all active user sessions upon successful password reset.
-  - `EmailService` abstraction supporting console in development and configurable SMTP/API in production.
-- **Zero Fake FFprobe Fallback**:
-  - Removed all fabricated fallback metadata (`1920x1080 30fps 60s`).
-  - Corrupted media or probe failure cleanly fails the job with `MEDIA_PROBE_FAILED` and user-friendly diagnostics.
-  - True stream validation verifies video stream existence, positive width/height, and container duration.
-- **Authorized Local Storage Downloads**:
-  - `GET /api/v1/uploads/storage/:key` is strictly authenticated.
-  - Database asset lookup ensures the requesting user belongs to the project's workspace.
-  - Canonical path resolution blocks all directory traversal attempts (`..`).
-- **Distributed Redis Rate Limiting**:
-  - Replaced in-memory map with Redis-backed atomic increment rate limiting.
-  - Configurable windows and thresholds for authentication and upload endpoints.
-  - Graceful fallback protects against cascading failures.
-- **Session Token Leakage Prevention**:
-  - Removed raw `token` from `/signup` and `/login` JSON responses; browser auth relies purely on secure HTTP-only cookies.
-- **Reliable Queue Dispatch**:
-  - Upload completion safely traps queue dispatch errors, records `QUEUE_DISPATCH_FAILED`, and resets project status instead of leaving jobs silently stuck in `PENDING`.
-- **Real Admin Metrics & Actions**:
-  - Completely eradicated fake data (`mrrUsd = 14500`, `storageUsedBytes = 4200000000000`, `plan = PRO`, `projectsCount = 5`).
-  - Queries actual database counts, real storage aggregates, real job status distributions, and marks billing metrics as `NOT_IMPLEMENTED`.
-  - Admin status updates validated via Zod enum, prevents self-suspension, revokes sessions on suspension, and logs audit events.
-### Production Stabilization & Hardening (Latest Updates)
-- **Real Email Verification Flow**:
-  - `EmailVerificationToken` table with single-use SHA-256 token hashing and 1-hour expiration.
-  - Accounts created in `PENDING_VERIFICATION` status; login blocked with `403 EMAIL_NOT_VERIFIED`.
-  - Full client activation UI (`/verify-email?token=...`), resend verification flow, and zero dev bypass links.
-- **Route Guards & RBAC**:
-  - Client-side auth protection across `/dashboard`, `/projects`, `/settings`.
-  - Admin console (`/admin`) strictly guarded for users with `ADMIN` role with 403 Access Denied fallback.
-  - Revocation of active sessions when accounts are suspended by an administrator.
-- **Zero-RAM Video Upload & Inspection**:
-  - Eliminated the 500MB Node.js Buffer download during upload completion.
-  - Container signature check inspects only the initial 8KB on disk via file descriptor slicing.
-  - Zero-copy FFprobe execution directly on local storage path without temporary disk cloning.
-  - Safe fallback streaming with automatic `finally` cleanup for remote storage drivers.
-- **Server-Managed Upload Intent**:
-  - Client uploads must be preceded by `POST /uploads/intent`, returning an `uploadIntentId`.
-  - Local upload receiver validates `UploadIntent` status, expiration, and payload size before writing.
-  - Client completes upload strictly using `{ uploadIntentId }`.
-  - False success on SSE error removed; replaced with deterministic fallback polling on `GET /jobs/:id`.
-- **Accurate Usage Accounting & Idempotency**:
-  - `UsageService` aggregates actual `UsageLedger` entries against user subscriptions or default `FREE` plan.
-  - Database-level unique constraint on `eventKey` guarantees that retry attempts do not duplicate usage deductions.
-  - Dashboard and admin UI display real DB numbers or `—` / `Loading...` / `Unavailable` (no fake Pro/500/100/300 fallbacks).
-- **Redis Health & Diagnostics**:
-  - Deep dependency check on `GET /health/dependencies` (Postgres, Redis, Storage, FFmpeg, Python/Whisper).
-  - Rate limiter fails closed in development with actionable instructions: `"Redis is unavailable. Start Docker/Redis and try again."`
-  - Worker daemon performs startup dependency verification for system binaries.
-- **Automated Verification Suite**:
-  - Tested with Node.js test runner across Redis auth, signup verification, usage service, upload intent, and subtitle parsing.
-
-### Not Yet Implemented (Deferred to Future Phases)
-- **Phase 6**: High-throughput GPU FFmpeg subtitle burning cluster (4K 60 FPS, ProRes, WebM, MP4).
-- **Phase 7**: Production Stripe billing integration with webhooks and customer portal.
-- **Phase 8**: User impersonation and team seat management.
-- **Phase 9**: Global CDN edge distribution, observability (Prometheus/Grafana), and SOC2 audit compliance.
-
-
-
+1. **Private Media**: All media uploaded to Supabase Storage is stored in private buckets. The browser receives short-lived signed URLs for direct upload and secure temporary download.
+2. **Zero Service Role Key Exposure**: `SUPABASE_SERVICE_ROLE_KEY` is strictly confined to server-side Node.js runtimes (`apps/api`, `apps/worker`). It is **never** bundled or exposed via `NEXT_PUBLIC_*`.
+3. **Fail-Closed Redis**: Rate limiting fails closed with `503 SERVICE_UNAVAILABLE` in production to prevent brute-force attacks during Redis infrastructure maintenance.
+4. **Idempotent Usage Tracking**: Database-enforced `eventKey` on `UsageLedger` prevents duplicate transcription minute deductions on worker retry attempts.
+5. **Direct Uploads**: Large video uploads do not route through the Express API server, avoiding Node.js memory pressure and bandwidth bottlenecks.

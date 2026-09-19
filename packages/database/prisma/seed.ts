@@ -314,162 +314,30 @@ async function main() {
     });
   }
 
-  // 4. Seed Demo User & Workspace
-  console.log('Creating Demo Admin & Creator Users...');
-  const demoUser = await prisma.user.upsert({
-    where: { email: 'alex.creator@captionstudio.io' },
-    update: {},
-    create: {
-      email: 'alex.creator@captionstudio.io',
-      name: 'Alex Rivera',
-      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&h=150&fit=crop&crop=faces',
-      role: UserRole.CREATOR,
-      status: UserStatus.ACTIVE,
-      emailVerified: new Date(),
-      timezone: 'America/New_York',
-      language: 'en',
-    },
-  });
+  // 4. Optional: Seed initial system administrator only if explicitly requested
+  const adminEmail = process.env.SEED_ADMIN_EMAIL;
+  const adminPasswordHash = process.env.SEED_ADMIN_PASSWORD_HASH;
 
-  const demoWorkspace = await prisma.workspace.upsert({
-    where: { slug: 'alex-studio' },
-    update: {},
-    create: {
-      name: "Alex Rivera's Studio",
-      slug: 'alex-studio',
-      members: {
-        create: {
-          userId: demoUser.id,
-          role: WorkspaceRole.OWNER,
-        },
+  if (adminEmail && adminPasswordHash) {
+    console.log(`Creating initial system administrator: ${adminEmail}...`);
+    await prisma.user.upsert({
+      where: { email: adminEmail },
+      update: {
+        role: UserRole.ADMIN,
+        status: UserStatus.ACTIVE,
       },
-      brandKit: {
-        create: {
-          primaryColor: '#635BFF',
-          secondaryColor: '#09090B',
-          accentColor: '#10B981',
-          fonts: ['Inter', 'Montserrat', 'Playfair Display'],
-        },
-      },
-    },
-  });
-
-  // Seed Subscription for Demo User
-  const proPlan = await prisma.plan.findUnique({ where: { tier: PlanTier.PRO } });
-  if (proPlan) {
-    await prisma.subscription.create({
-      data: {
-        userId: demoUser.id,
-        planId: proPlan.id,
-        status: 'ACTIVE',
-        currentPeriodStart: new Date(),
-        currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      create: {
+        email: adminEmail,
+        name: process.env.SEED_ADMIN_NAME || 'System Administrator',
+        passwordHash: adminPasswordHash,
+        role: UserRole.ADMIN,
+        status: UserStatus.ACTIVE,
+        emailVerified: new Date(),
       },
     });
   }
 
-  // 5. Seed Realistic Demo Projects
-  console.log('Creating Demo Projects...');
-  const demoProjects = [
-    {
-      name: 'The 3 Keys to Bootstrapping a SaaS to $100K MRR',
-      description: 'Vertical 9:16 talking-head reel with Hormozi kinetic green subtitles.',
-      status: ProjectStatus.READY,
-      thumbnailUrl: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=600&h=340&fit=crop',
-      durationSeconds: 58.4,
-      width: 1080,
-      height: 1920,
-      fps: 30,
-    },
-    {
-      name: 'AI Automation Masterclass Ep. 04 — Agentic Workflows',
-      description: 'Long-form YouTube video with chapterized subtitles and keyword highlights.',
-      status: ProjectStatus.EXPORTED,
-      thumbnailUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&h=340&fit=crop',
-      durationSeconds: 420.2,
-      width: 1920,
-      height: 1080,
-      fps: 60,
-    },
-    {
-      name: 'Quick Teaser: Product Hunt Launch Day Announcement',
-      description: 'Punchy 15s teaser with Beast Kinetic typography.',
-      status: ProjectStatus.DRAFT,
-      thumbnailUrl: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=600&h=340&fit=crop',
-      durationSeconds: 15.0,
-      width: 1080,
-      height: 1920,
-      fps: 30,
-    },
-  ];
-
-  for (const p of demoProjects) {
-    await prisma.project.create({
-      data: {
-        workspaceId: demoWorkspace.id,
-        name: p.name,
-        description: p.description,
-        status: p.status,
-        thumbnailUrl: p.thumbnailUrl,
-        durationSeconds: p.durationSeconds,
-        width: p.width,
-        height: p.height,
-        fps: p.fps,
-      },
-    });
-  }
-
-  // 6. Seed Usage Ledgers
-  console.log('Creating Usage Records...');
-  await prisma.usageLedger.createMany({
-    data: [
-      {
-        userId: demoUser.id,
-        workspaceId: demoWorkspace.id,
-        type: UsageType.TRANSCRIPTION_MINUTES,
-        amount: 32.5,
-      },
-      {
-        userId: demoUser.id,
-        workspaceId: demoWorkspace.id,
-        type: UsageType.RENDER_MINUTES,
-        amount: 28.0,
-      },
-      {
-        userId: demoUser.id,
-        workspaceId: demoWorkspace.id,
-        type: UsageType.STORAGE_BYTES,
-        amount: 4.8 * 1024 * 1024 * 1024, // 4.8 GB
-      },
-      {
-        userId: demoUser.id,
-        workspaceId: demoWorkspace.id,
-        type: UsageType.EXPORTS_COUNT,
-        amount: 14,
-      },
-    ],
-  });
-
-  // 7. Seed Notifications
-  console.log('Creating Notifications...');
-  await prisma.notification.createMany({
-    data: [
-      {
-        userId: demoUser.id,
-        title: 'Export Completed',
-        message: 'Your video "AI Automation Masterclass Ep. 04" is ready to download in 1080p 60FPS.',
-        read: false,
-      },
-      {
-        userId: demoUser.id,
-        title: 'Subscription Activated',
-        message: 'Welcome to CaptionStudio PRO Studio plan. 500 transcription minutes unlocked.',
-        read: true,
-      },
-    ],
-  });
-
-  console.log('✅ CaptionStudio PRO Database Seeding Completed Successfully!');
+  console.log('✅ CaptionStudio PRO System Database Seeding Completed Successfully! (Zero fake data seeded)');
 }
 
 main()

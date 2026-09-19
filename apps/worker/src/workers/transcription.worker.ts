@@ -65,20 +65,14 @@ export function createTranscriptionWorker() {
       let tempAudioPath: string | null = null;
 
       try {
-        // 1. Locate media asset or download from storage
-        let sourcePath: string;
-        const localBasePath = path.resolve(process.env.STORAGE_LOCAL_PATH || './uploads');
-        const directLocalPath = path.join(localBasePath, audioStorageKey);
+        // 1. Obtain media file from storage
+        await updateJobState(jobId, { progress: 15, stage: 'Retrieving media for transcription' });
+        await job.updateProgress(15);
 
-        if (fs.existsSync(directLocalPath)) {
-          sourcePath = directLocalPath;
-        } else {
-          const buffer = await storage.download(audioStorageKey);
-          const ext = path.extname(audioStorageKey) || '.mp4';
-          tempVideoPath = path.join(os.tmpdir(), `source-${Date.now()}-${Math.random().toString(36).substring(2, 7)}${ext}`);
-          await fs.promises.writeFile(tempVideoPath, buffer);
-          sourcePath = tempVideoPath;
-        }
+        let sourcePath: string;
+        const tempResult = await storage.downloadToTempFile(audioStorageKey);
+        sourcePath = tempResult.filePath;
+        tempVideoPath = tempResult.filePath;
 
         // 2. Extract 16kHz mono audio stream
         await updateJobState(jobId, { progress: 25, stage: 'Extracting audio' });

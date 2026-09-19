@@ -35,9 +35,9 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 
-# Storage / uploads / temp
-uploads/
-storage/
-temp/
-scratch/
+# Storage / uploads / temp (root directories)
+/uploads/
+/storage/
+/temp/
+/scratch/
 

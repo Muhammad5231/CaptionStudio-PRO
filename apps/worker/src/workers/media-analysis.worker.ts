@@ -49,25 +49,16 @@ export function createMediaAnalysisWorker() {
       await job.updateProgress(10);
 
       let tempFilePath: string | null = null;
+      let filePath: string;
 
       try {
         // 1. Obtain local file path for probing
-        let filePath: string;
-        const localBasePath = path.resolve(process.env.STORAGE_LOCAL_PATH || './uploads');
-        const directLocalPath = path.join(localBasePath, storageKey);
+        await updateJobState(jobId, { progress: 30, stage: 'Retrieving media for analysis' });
+        await job.updateProgress(30);
 
-        if (fs.existsSync(directLocalPath)) {
-          filePath = directLocalPath;
-        } else {
-          await updateJobState(jobId, { progress: 30, stage: 'Downloading media for analysis' });
-          await job.updateProgress(30);
-
-          const buffer = await storage.download(storageKey);
-          const ext = path.extname(storageKey) || '.mp4';
-          tempFilePath = path.join(os.tmpdir(), `probe-${Date.now()}-${Math.random().toString(36).substring(2, 7)}${ext}`);
-          await fs.promises.writeFile(tempFilePath, buffer);
-          filePath = tempFilePath;
-        }
+        const tempResult = await storage.downloadToTempFile(storageKey);
+        filePath = tempResult.filePath;
+        tempFilePath = tempResult.filePath;
 
         // 2. Probe media with FFprobe
         await updateJobState(jobId, { progress: 60, stage: 'Extracting video and audio streams' });

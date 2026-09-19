@@ -9,11 +9,14 @@ export function getRedisConnection(): Redis {
   }
 
   const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+  const isTls = redisUrl.startsWith('rediss://');
+
   const options: RedisOptions = {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
     lazyConnect: true,
-    connectTimeout: 3000,
+    connectTimeout: 5000,
+    tls: isTls ? { rejectUnauthorized: process.env.REDIS_TLS_REJECT_UNAUTHORIZED !== 'false' } : undefined,
     retryStrategy(times) {
       if (process.env.NODE_ENV === 'test' || times > 10) {
         return null; // Stop reconnecting during tests or after max retries
@@ -22,13 +25,14 @@ export function getRedisConnection(): Redis {
     },
   };
 
+  const maskedUrl = redisUrl.replace(/:\/\/[^:]+:[^@]+@/, '://***:***@');
   redisClient = new Redis(redisUrl, options);
 
   // Suppress unhandled error event crashes and spam
   redisClient.on('error', (err) => {
     if (!hasLoggedRedisWarning) {
       console.warn(
-        `⚠️ [Redis] Connection unavailable at ${redisUrl} (${err.message || 'ECONNREFUSED'}). Operations requiring Redis will fail-closed (auth) or pause.`
+        `⚠️ [Redis] Connection unavailable at ${maskedUrl} (${err.message || 'ECONNREFUSED'}). Operations requiring Redis will fail-closed (auth) or pause.`
       );
       hasLoggedRedisWarning = true;
     }
@@ -36,7 +40,7 @@ export function getRedisConnection(): Redis {
 
   redisClient.on('connect', () => {
     if (hasLoggedRedisWarning) {
-      console.log('✅ [Redis] Connected successfully.');
+      console.log(`✅ [Redis] Connected successfully to ${maskedUrl}.`);
       hasLoggedRedisWarning = false;
     }
   });

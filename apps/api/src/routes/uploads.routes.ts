@@ -469,22 +469,11 @@ uploadsRouter.post('/complete', authenticate, async (req: Request, res: Response
       const stat = await fs.promises.stat(localFilePath);
       actualSizeBytes = stat.size;
     } else {
-      // Remote storage driver fallback: stream directly to temp file without holding in RAM
-      const tempPath = path.join(
-        os.tmpdir(),
-        `captionstudio-stream-${Date.now()}-${crypto.randomUUID()}${path.extname(intent.storageKey) || '.bin'}`
-      );
-      const readStream = await storageProvider.downloadStream(intent.storageKey);
-      const writeStream = fs.createWriteStream(tempPath);
-      await new Promise<void>((resolve, reject) => {
-        readStream.pipe(writeStream);
-        writeStream.on('finish', () => resolve());
-        writeStream.on('error', reject);
-      });
-      const stat = await fs.promises.stat(tempPath);
-      actualSizeBytes = stat.size;
-      localFilePath = tempPath;
+      const tempResult = await storageProvider.downloadToTempFile(intent.storageKey);
+      localFilePath = tempResult.filePath;
       tempFileCreated = true;
+      const stat = await fs.promises.stat(localFilePath);
+      actualSizeBytes = stat.size;
     }
 
     try {
