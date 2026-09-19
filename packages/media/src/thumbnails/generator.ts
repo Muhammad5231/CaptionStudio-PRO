@@ -30,3 +30,4 @@ export class ThumbnailService implements IThumbnailService {
   }
 }
 
+export { ThumbnailService as ThumbnailGeneratorService };

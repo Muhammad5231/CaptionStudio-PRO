@@ -105,6 +105,15 @@ enum NotificationType {
   PROJECT_SHARED
 }
 
+enum UploadIntentStatus {
+  PENDING
+  UPLOADING
+  COMPLETED
+  EXPIRED
+  CANCELLED
+}
+
+
 // -----------------------------------------------------------------------------
 // USER & IDENTITY MODELS
 // -----------------------------------------------------------------------------
@@ -134,6 +143,7 @@ model User {
   auditLogs          AuditLog[]
   supportTickets     SupportTicket[]
   usageLedgers       UsageLedger[]
+  uploadIntents      UploadIntent[]
   createdTemplates   Template[]   @relation("TemplateCreator")
 
   createdAt          DateTime     @default(now())
@@ -203,6 +213,7 @@ model Workspace {
   projects    Project[]
   brandKit    BrandKit?
   usageLedger UsageLedger[]
+  uploadIntents UploadIntent[]
 
   @@index([slug])
 }
@@ -330,6 +341,7 @@ model Project {
   versions         ProjectVersion[]
   exportJobs       ExportJob[]
   exports          Export[]
+  uploadIntents    UploadIntent[]
 
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
@@ -603,4 +615,51 @@ model SupportTicket {
 
   @@index([userId])
 }
+
+// -----------------------------------------------------------------------------
+// UPLOAD INTENTS & RELIABILITY
+// -----------------------------------------------------------------------------
+
+model UploadIntent {
+  id                    String             @id @default(cuid())
+  userId                String
+  workspaceId           String
+  projectId             String
+
+  storageKey            String             @unique
+
+  expectedFileSizeBytes BigInt?
+  expectedMimeType      String?
+  assetType             AssetType
+
+  status                UploadIntentStatus @default(PENDING)
+
+  expiresAt             DateTime
+  createdAt             DateTime           @default(now())
+  completedAt           DateTime?
+
+  user                  User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace             Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project               Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model OutboxEvent {
+  id            String    @id @default(cuid())
+  type          String
+  aggregateId   String
+  payload       Json
+  attempts      Int       @default(0)
+  publishedAt   DateTime?
+  availableAt   DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+
+  @@index([publishedAt, availableAt])
+}
+
 

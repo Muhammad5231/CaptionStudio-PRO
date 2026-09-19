@@ -6,4 +6,4 @@ export * from './media';
 export * from './jobs';
 export * from './billing';
 export * from './api';
-
+export * from './render-contract';

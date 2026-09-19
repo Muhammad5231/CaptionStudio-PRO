@@ -3,7 +3,11 @@ export * from './tokenizer/tokenizer';
 export * from './grouping/grouper';
 export * from './timing/timing';
 export * from './styles/presets';
+export * from './styles/schema';
+export * from './styles/font-registry';
+export * from './templates/templates';
 export * from './animations/presets';
+export * from './animations/engine';
+export * from './safe-area/safe-area';
 export * from './serializers/serializers';
 export * from './validation/validator';
-

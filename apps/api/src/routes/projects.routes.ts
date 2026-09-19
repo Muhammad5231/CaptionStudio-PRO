@@ -1,11 +1,15 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { prisma, Prisma, ProjectStatus, WorkspaceRole } from '@captionstudio/database';
+import { prisma, Prisma, ProjectStatus, WorkspaceRole, JobType, JobStatus } from '@captionstudio/database';
 import { CreateProjectSchema, UpdateProjectSchema } from '@captionstudio/types';
+import { OutboxDispatcher } from '@captionstudio/queue';
 import { authenticate } from '../middlewares/auth.middleware';
 import { requireWorkspace } from '../middlewares/workspace.middleware';
 import { requireProjectAccess } from '../middlewares/project.middleware';
 import { recordAuditLog } from '../services/audit.service';
+
+const outboxDispatcher = new OutboxDispatcher(prisma as any);
+
 
 export const projectsRouter = Router();
 
@@ -417,3 +421,157 @@ projectsRouter.delete('/:id', requireProjectAccess(WorkspaceRole.ADMIN), async (
     next(err);
   }
 });
+
+/**
+ * POST /api/v1/projects/:id/transcribe
+ * Triggers Whisper AI transcription for the project's primary video asset.
+ */
+projectsRouter.post('/:id/transcribe', requireProjectAccess(WorkspaceRole.EDITOR), async (req, res, next) => {
+  try {
+    const projectId = req.params.id;
+    const { language = 'auto', whisperModel = 'tiny' } = req.body || {};
+
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      include: { assets: true },
+    });
+
+    if (!project) {
+      return res.status(404).json({ error: { code: 'PROJECT_NOT_FOUND', message: 'Project not found.' } });
+    }
+
+    const videoAsset = project.assets.find((a) => a.type === 'VIDEO');
+    if (!videoAsset) {
+      return res.status(400).json({
+        error: {
+          code: 'NO_VIDEO_ASSET',
+          message: 'Project has no uploaded video asset to transcribe. Please upload a video first.',
+        },
+      });
+    }
+
+    // Create TRANSCRIPTION job and OutboxEvent atomically
+    const job = await prisma.$transaction(async (tx) => {
+      const createdJob = await tx.exportJob.create({
+        data: {
+          projectId: project.id,
+          type: JobType.TRANSCRIPTION,
+          status: JobStatus.PENDING,
+          progress: 0,
+          stage: 'Enqueued for transcription',
+          metadata: {
+            language,
+            whisperModel,
+            assetId: videoAsset.id,
+            storageKey: videoAsset.storageKey,
+          },
+        },
+      });
+
+      await tx.outboxEvent.create({
+        data: {
+          type: 'TRANSCRIPTION',
+          aggregateId: createdJob.id,
+          payload: {
+            jobId: createdJob.id,
+            userId: req.user!.id,
+            workspaceId: project.workspaceId,
+            projectId: project.id,
+            type: JobType.TRANSCRIPTION,
+            audioStorageKey: videoAsset.storageKey,
+            language,
+            whisperModel,
+          },
+        },
+      });
+
+      await tx.project.update({
+        where: { id: project.id },
+        data: { status: ProjectStatus.TRANSCRIBING },
+      });
+
+      return createdJob;
+    });
+
+    outboxDispatcher.processPendingEvents().catch((err) => {
+      console.error('[Projects:Transcribe] Outbox dispatch error:', err);
+    });
+
+    res.json({
+      success: true,
+      data: {
+        jobId: job.id,
+        projectId: project.id,
+        status: job.status,
+        progress: job.progress,
+        stage: job.stage,
+      },
+      message: 'Transcription job enqueued successfully.',
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const SaveVersionSchema = z.object({
+  captionPayload: z.any(),
+  changelog: z.string().optional(),
+  expectedVersionNumber: z.number().optional(),
+});
+
+/**
+ * POST /api/v1/projects/:id/versions
+ * Creates a new version (autosave / user edit) with optimistic concurrency conflict detection.
+ */
+projectsRouter.post('/:id/versions', requireProjectAccess(WorkspaceRole.EDITOR), async (req, res, next) => {
+  try {
+    const projectId = req.params.id;
+    const { captionPayload, changelog, expectedVersionNumber } = SaveVersionSchema.parse(req.body);
+
+    const latestVersion = await prisma.projectVersion.findFirst({
+      where: { projectId },
+      orderBy: { versionNumber: 'desc' },
+    });
+
+    const currentVersionNumber = latestVersion?.versionNumber || 0;
+
+    // Optimistic concurrency conflict check
+    if (expectedVersionNumber !== undefined && currentVersionNumber > expectedVersionNumber) {
+      return res.status(409).json({
+        error: {
+          code: 'VERSION_CONFLICT',
+          message: `Conflict: Your edit was based on version ${expectedVersionNumber}, but current version is ${currentVersionNumber}.`,
+          currentVersion: {
+            id: latestVersion!.id,
+            versionNumber: currentVersionNumber,
+            updatedAt: latestVersion!.createdAt.toISOString(),
+          },
+        },
+      });
+    }
+
+    const nextVersionNum = currentVersionNumber + 1;
+
+    const version = await prisma.projectVersion.create({
+      data: {
+        projectId,
+        versionNumber: nextVersionNum,
+        captionPayload: captionPayload as object,
+        changelog: changelog || `User edit (Version ${nextVersionNum})`,
+      },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        id: version.id,
+        versionNumber: version.versionNumber,
+        createdAt: version.createdAt.toISOString(),
+      },
+      message: `Project version ${version.versionNumber} saved successfully.`,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+

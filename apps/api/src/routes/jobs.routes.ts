@@ -158,3 +158,64 @@ jobsRouter.get('/:id/events', async (req: Request, res: Response) => {
     }
   }, 1000);
 });
+
+/**
+ * POST /api/v1/jobs/:id/cancel
+ * Cancels a pending or processing job and prevents subsequent state overrides.
+ */
+jobsRouter.post('/:id/cancel', async (req: Request, res: Response) => {
+  const jobId = req.params.id;
+
+  const job = await prisma.exportJob.findUnique({
+    where: { id: jobId },
+    include: { project: true },
+  });
+
+  if (!job) {
+    return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Job not found' } });
+  }
+
+  const isMember = req.user!.workspaceMembers.some(
+    (m) =>
+      m.workspaceId === job.project.workspaceId &&
+      (m.role === 'OWNER' || m.role === 'ADMIN' || m.role === 'EDITOR')
+  );
+
+  if (!isMember && req.user!.role !== 'ADMIN' && req.user!.role !== 'SUPER_ADMIN') {
+    return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Forbidden' } });
+  }
+
+  if (job.status === JobStatus.COMPLETED || job.status === JobStatus.FAILED) {
+    return res.status(400).json({
+      error: {
+        code: 'JOB_ALREADY_FINISHED',
+        message: `Cannot cancel job because it is already ${job.status}.`,
+      },
+    });
+  }
+
+  const updated = await prisma.exportJob.update({
+    where: { id: jobId },
+    data: {
+      status: JobStatus.CANCELLED,
+      stage: 'Cancelled by user',
+      completedAt: new Date(),
+    },
+  });
+
+  await prisma.project.update({
+    where: { id: job.projectId },
+    data: { status: 'READY' },
+  }).catch(() => {});
+
+  res.json({
+    success: true,
+    data: {
+      id: updated.id,
+      status: updated.status,
+      stage: updated.stage,
+    },
+    message: 'Job was cancelled successfully.',
+  });
+});
+

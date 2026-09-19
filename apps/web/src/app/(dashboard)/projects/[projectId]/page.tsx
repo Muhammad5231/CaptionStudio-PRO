@@ -228,6 +228,12 @@ export default function ProjectDetailsPage() {
 
         {/* Top Actions */}
         <div className="flex items-center gap-2.5 flex-wrap">
+          <Link href={`/projects/${projectId}/editor`}>
+            <Button size="sm" className="bg-[#635BFF] hover:bg-[#5349e0] text-white">
+              <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+              <span>Open Studio Editor</span>
+            </Button>
+          </Link>
           <Button variant="outline" size="sm" onClick={() => setIsUploadModalOpen(true)}>
             <Upload className="h-3.5 w-3.5 mr-1.5" />
             <span>Upload Media</span>
@@ -308,9 +314,16 @@ export default function ProjectDetailsPage() {
                   Subtitle Track ({captionLines.length} lines)
                 </h2>
               </div>
-              <span className="text-[11px] text-slate-500 dark:text-zinc-400">
-                {latestVersion ? `Version ${latestVersion.versionNumber}` : 'No captions track'}
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] text-slate-500 dark:text-zinc-400">
+                  {latestVersion ? `Version ${latestVersion.versionNumber}` : 'No captions track'}
+                </span>
+                <Link href={`/projects/${projectId}/editor`}>
+                  <Button size="sm" variant="outline" className="h-7 text-xs">
+                    Edit in Studio
+                  </Button>
+                </Link>
+              </div>
             </div>
 
             {captionLines.length > 0 ? (

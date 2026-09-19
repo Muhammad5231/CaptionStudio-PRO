@@ -6,6 +6,7 @@ import { getRedisConnection } from './connection';
 let transcriptionQueue: Queue<TranscriptionJobData> | null = null;
 let thumbnailQueue: Queue<ThumbnailJobData> | null = null;
 let exportQueue: Queue<ExportJobData> | null = null;
+let mediaAnalysisQueue: Queue<MediaAnalysisJobData> | null = null;
 
 export function getTranscriptionQueue(): Queue<TranscriptionJobData> {
   if (!transcriptionQueue) {
@@ -29,8 +30,6 @@ export function getThumbnailQueue(): Queue<ThumbnailJobData> {
   return thumbnailQueue;
 }
 
-let mediaAnalysisQueue: Queue<MediaAnalysisJobData> | null = null;
-
 export function getMediaAnalysisQueue(): Queue<MediaAnalysisJobData> {
   if (!mediaAnalysisQueue) {
     mediaAnalysisQueue = new Queue<MediaAnalysisJobData>(QUEUE_NAMES.MEDIA_ANALYSIS, {
@@ -40,13 +39,6 @@ export function getMediaAnalysisQueue(): Queue<MediaAnalysisJobData> {
     mediaAnalysisQueue.on('error', () => {});
   }
   return mediaAnalysisQueue;
-}
-
-export async function addMediaAnalysisJob(data: MediaAnalysisJobData) {
-  const queue = getMediaAnalysisQueue();
-  return queue.add('analyze-media', data, {
-    jobId: data.jobId,
-  });
 }
 
 export function getExportQueue(): Queue<ExportJobData> {
@@ -60,3 +52,28 @@ export function getExportQueue(): Queue<ExportJobData> {
   return exportQueue;
 }
 
+export async function addMediaAnalysisJob(data: MediaAnalysisJobData) {
+  const queue = getMediaAnalysisQueue();
+  // Idempotent Job ID
+  const jobId = data.jobId || `media-analysis:${data.assetId}`;
+  return queue.add('analyze-media', data, {
+    jobId,
+  });
+}
+
+export async function addTranscriptionJob(data: TranscriptionJobData) {
+  const queue = getTranscriptionQueue();
+  // Idempotent Job ID
+  const jobId = data.jobId || `transcription:${data.projectId}:${Date.now()}`;
+  return queue.add('transcribe-speech', data, {
+    jobId,
+  });
+}
+
+export async function addExportJob(data: ExportJobData) {
+  const queue = getExportQueue();
+  const jobId = data.jobId || `export:${data.projectId}:${Date.now()}`;
+  return queue.add('export-render', data, {
+    jobId,
+  });
+}

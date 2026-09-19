@@ -64,9 +64,9 @@ export function createRateLimiter(options: RateLimitOptions) {
 
     const redis = getRedisConnection();
 
-    // If Redis is not currently ready, bypass to memory fallback immediately without blocking the request
+    // If Redis is not currently ready, check failClosed configuration
     if (redis.status !== 'ready') {
-      if (failClosed && process.env.NODE_ENV === 'production') {
+      if (failClosed) {
         return res.status(503).json({
           error: {
             code: 'SERVICE_UNAVAILABLE',
@@ -109,7 +109,7 @@ export function createRateLimiter(options: RateLimitOptions) {
 
       next();
     } catch {
-      if (failClosed && process.env.NODE_ENV === 'production') {
+      if (failClosed) {
         return res.status(503).json({
           error: {
             code: 'SERVICE_UNAVAILABLE',
@@ -136,7 +136,7 @@ export const authRateLimiter = createRateLimiter({
   windowSeconds: AUTH_WINDOW,
   maxRequests: AUTH_MAX,
   message: 'Too many authentication attempts. Please try again in 15 minutes.',
-  failClosed: false, // In development/local without full Redis, allow graceful fallback while in prod Redis is active
+  failClosed: true, // Security-critical: fail closed if Redis is unavailable or times out
 });
 
 export const uploadRateLimiter = createRateLimiter({
@@ -146,3 +146,4 @@ export const uploadRateLimiter = createRateLimiter({
   message: 'Upload rate limit reached. Please wait a moment before trying again.',
   failClosed: false,
 });
+

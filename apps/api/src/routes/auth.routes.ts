@@ -326,7 +326,14 @@ authRouter.post('/forgot-password', authRateLimiter, async (req, res, next) => {
       const appBaseUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
       const resetUrl = `${appBaseUrl}/reset-password?token=${rawToken}`;
 
-      await emailService.sendPasswordResetEmail(user.email, resetUrl);
+      try {
+        await emailService.sendPasswordResetEmail(user.email, resetUrl);
+      } catch (emailErr) {
+        console.error(
+          '[Auth:ForgotPassword] Password reset email dispatch failed:',
+          emailErr instanceof Error ? emailErr.message : 'Unknown error'
+        );
+      }
 
       await recordAuditLog({
         userId: user.id,

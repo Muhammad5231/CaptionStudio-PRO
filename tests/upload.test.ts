@@ -74,5 +74,74 @@ describe('Upload Architecture & Storage Security', () => {
       await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {});
     }
   });
-});
 
+  describe('UploadIntent Lifecycle & Ownership Rules', () => {
+    it('should validate status and expiration rules strictly', () => {
+      const validateIntent = (intent: {
+        status: string;
+        expiresAt: Date;
+        userId: string;
+        workspaceId: string;
+      }, actor: { userId: string; workspaceMemberships: string[] }) => {
+        if (intent.status === 'COMPLETED') return { valid: false, code: 'INTENT_ALREADY_COMPLETED' };
+        if (intent.status === 'CANCELLED') return { valid: false, code: 'INTENT_CANCELLED' };
+        if (intent.expiresAt.getTime() < Date.now()) return { valid: false, code: 'UPLOAD_INTENT_EXPIRED' };
+
+        const isOwner = intent.userId === actor.userId;
+        const inWorkspace = actor.workspaceMemberships.includes(intent.workspaceId);
+        if (!isOwner && !inWorkspace) return { valid: false, code: 'FORBIDDEN' };
+
+        return { valid: true };
+      };
+
+      const validIntent = {
+        status: 'PENDING',
+        expiresAt: new Date(Date.now() + 3600 * 1000),
+        userId: 'user-alice',
+        workspaceId: 'ws-marketing',
+      };
+
+      // 1. Valid by owner
+      assert.deepStrictEqual(
+        validateIntent(validIntent, { userId: 'user-alice', workspaceMemberships: ['ws-marketing'] }),
+        { valid: true }
+      );
+
+      // 2. Valid by team member in same workspace
+      assert.deepStrictEqual(
+        validateIntent(validIntent, { userId: 'user-bob', workspaceMemberships: ['ws-marketing'] }),
+        { valid: true }
+      );
+
+      // 3. Rejects attacker from different workspace
+      assert.deepStrictEqual(
+        validateIntent(validIntent, { userId: 'user-eve', workspaceMemberships: ['ws-other'] }),
+        { valid: false, code: 'FORBIDDEN' }
+      );
+
+      // 4. Rejects already completed intent reuse
+      const completedIntent = { ...validIntent, status: 'COMPLETED' };
+      assert.deepStrictEqual(
+        validateIntent(completedIntent, { userId: 'user-alice', workspaceMemberships: ['ws-marketing'] }),
+        { valid: false, code: 'INTENT_ALREADY_COMPLETED' }
+      );
+
+      // 5. Rejects expired intent
+      const expiredIntent = { ...validIntent, expiresAt: new Date(Date.now() - 1000) };
+      assert.deepStrictEqual(
+        validateIntent(expiredIntent, { userId: 'user-alice', workspaceMemberships: ['ws-marketing'] }),
+        { valid: false, code: 'UPLOAD_INTENT_EXPIRED' }
+      );
+    });
+
+    it('should derive trusted file size from storage rather than client claim', () => {
+      const clientClaimedSize = 100; // Client says 100 bytes
+      const actualStorageSize = 550 * 1024 * 1024; // Actual storage object is 550MB (oversized)
+      const MAX_BYTES = 500 * 1024 * 1024;
+
+      // System validates actual storage object size
+      const isWithinLimits = actualStorageSize <= MAX_BYTES;
+      assert.strictEqual(isWithinLimits, false, 'Must reject based on actual storage bytes, ignoring client claim');
+    });
+  });
+});

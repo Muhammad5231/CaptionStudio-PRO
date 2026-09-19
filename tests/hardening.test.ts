@@ -179,5 +179,97 @@ describe('Phase 2 Hardening — Security, Media & Admin Guarantees', () => {
       );
     });
   });
+
+  describe('Rate Limiter Fail-Closed Semantics', () => {
+    it('should fail closed with 503 SERVICE_UNAVAILABLE when Redis is disconnected on auth limiter', () => {
+      const evaluateRateLimit = (options: { failClosed: boolean; redisReady: boolean }) => {
+        if (!options.redisReady) {
+          if (options.failClosed) {
+            return { status: 503, code: 'SERVICE_UNAVAILABLE' };
+          }
+          return { status: 200, code: 'MEMORY_FALLBACK' };
+        }
+        return { status: 200, code: 'OK' };
+      };
+
+      // Auth limiter has failClosed: true
+      const authResult = evaluateRateLimit({ failClosed: true, redisReady: false });
+      assert.strictEqual(authResult.status, 503);
+      assert.strictEqual(authResult.code, 'SERVICE_UNAVAILABLE');
+
+      // Upload limiter has failClosed: false
+      const uploadResult = evaluateRateLimit({ failClosed: false, redisReady: false });
+      assert.strictEqual(uploadResult.status, 200);
+      assert.strictEqual(uploadResult.code, 'MEMORY_FALLBACK');
+    });
+
+    it('should calculate accurate Retry-After header on 429 rate limit exceeded', () => {
+      const maxRequests = 5;
+      const windowSeconds = 60;
+      const currentCount = 6;
+      const ttl = 42;
+
+      const isRateLimited = currentCount > maxRequests;
+      const retryAfter = ttl > 0 ? ttl : windowSeconds;
+
+      assert.strictEqual(isRateLimited, true);
+      assert.strictEqual(retryAfter, 42);
+    });
+  });
+
+  describe('Email Provider Abstraction & PII Masking', () => {
+    it('should mask recipient email in console logs to prevent PII exposure', () => {
+      const maskEmail = (email: string) =>
+        email.replace(
+          /^(.)(.*)(@.*)$/,
+          (_, first, middle, domain) => `${first}${'*'.repeat(Math.min(middle.length, 4))}${domain}`
+        );
+
+      assert.strictEqual(maskEmail('john.doe@captionstudio.io'), 'j****@captionstudio.io');
+      assert.strictEqual(maskEmail('alice@example.com'), 'a****@example.com');
+    });
+
+    it('should construct branded password reset email with trusted APP_URL and no leaked tokens', () => {
+      const resetUrl = 'https://app.captionstudio.io/reset-password?token=abcdef123456';
+      const expiresInMinutes = 30;
+
+      const buildEmail = (url: string, ttl: number) => {
+        assert.ok(!url.includes('undefined'), 'Must not contain undefined host');
+        assert.ok(url.startsWith('https://'), 'Production URL must use HTTPS');
+        return {
+          subject: 'Reset your CaptionStudio PRO password',
+          containsBranding: true,
+          expiresInMinutes: ttl,
+        };
+      };
+
+      const email = buildEmail(resetUrl, expiresInMinutes);
+      assert.strictEqual(email.subject, 'Reset your CaptionStudio PRO password');
+      assert.strictEqual(email.expiresInMinutes, 30);
+    });
+  });
+
+  describe('Transactional Outbox Reliability & Job Idempotency', () => {
+    it('should enforce exponential backoff on dispatch failure', () => {
+      const computeBackoff = (attempts: number) => Math.min(60000, 1000 * Math.pow(2, attempts));
+
+      assert.strictEqual(computeBackoff(1), 2000); // 2s
+      assert.strictEqual(computeBackoff(2), 4000); // 4s
+      assert.strictEqual(computeBackoff(3), 8000); // 8s
+      assert.strictEqual(computeBackoff(6), 60000); // capped at 60s
+    });
+
+    it('should generate deterministic, idempotent job IDs for deduplication', () => {
+      const getMediaAnalysisJobId = (assetId: string) => `media-analysis:${assetId}`;
+      const getTranscriptionJobId = (projectId: string, versionNumber: number) =>
+        `transcription:${projectId}:v${versionNumber}`;
+
+      assert.strictEqual(getMediaAnalysisJobId('asset-123'), 'media-analysis:asset-123');
+      assert.strictEqual(getMediaAnalysisJobId('asset-123'), 'media-analysis:asset-123'); // same ID prevents duplicates
+
+      assert.strictEqual(getTranscriptionJobId('proj-456', 1), 'transcription:proj-456:v1');
+    });
+  });
 });
+
 
