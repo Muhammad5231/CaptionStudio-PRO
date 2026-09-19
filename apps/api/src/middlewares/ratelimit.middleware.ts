@@ -12,6 +12,41 @@ export interface RateLimitOptions {
 // In-memory fallback map if Redis is temporarily unreachable
 const memoryFallbackMap = new Map<string, { count: number; resetTime: number }>();
 
+function executeMemoryFallback(
+  key: string,
+  windowSeconds: number,
+  maxRequests: number,
+  message: string,
+  res: Response,
+  next: NextFunction
+) {
+  const now = Date.now();
+  const record = memoryFallbackMap.get(key);
+
+  if (!record || record.resetTime < now) {
+    memoryFallbackMap.set(key, {
+      count: 1,
+      resetTime: now + windowSeconds * 1000,
+    });
+    return next();
+  }
+
+  if (record.count >= maxRequests) {
+    const retryAfterSeconds = Math.ceil((record.resetTime - now) / 1000);
+    res.setHeader('Retry-After', retryAfterSeconds);
+    return res.status(429).json({
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message,
+        retryAfterSeconds,
+      },
+    });
+  }
+
+  record.count++;
+  return next();
+}
+
 export function createRateLimiter(options: RateLimitOptions) {
   const {
     windowSeconds,
@@ -27,11 +62,28 @@ export function createRateLimiter(options: RateLimitOptions) {
     const sanitizedPath = (req.baseUrl + req.path).replace(/[^a-zA-Z0-9_-]/g, '_');
     const redisKey = `ratelimit:${prefix}:${sanitizedPath}:${clientId}`;
 
-    try {
-      const redis = getRedisConnection();
+    const redis = getRedisConnection();
 
-      // Execute atomic counter increment
-      const currentCount = await redis.incr(redisKey);
+    // If Redis is not currently ready, bypass to memory fallback immediately without blocking the request
+    if (redis.status !== 'ready') {
+      if (failClosed && process.env.NODE_ENV === 'production') {
+        return res.status(503).json({
+          error: {
+            code: 'SERVICE_UNAVAILABLE',
+            message: 'Rate limiting service is temporarily unavailable. Please try again shortly.',
+          },
+        });
+      }
+      return executeMemoryFallback(redisKey, windowSeconds, maxRequests, message, res, next);
+    }
+
+    try {
+      // Execute atomic counter increment with a timeout safeguard
+      const currentCount = await Promise.race([
+        redis.incr(redisKey),
+        new Promise<number>((_, reject) => setTimeout(() => reject(new Error('Redis timeout')), 1000)),
+      ]);
+
       if (currentCount === 1) {
         await redis.expire(redisKey, windowSeconds);
       }
@@ -56,11 +108,8 @@ export function createRateLimiter(options: RateLimitOptions) {
       }
 
       next();
-    } catch (redisErr) {
-      console.warn(`[RateLimiter] Redis error on ${redisKey}:`, redisErr);
-
-      if (failClosed) {
-        // High security endpoints (auth/passwords) fail closed when distributed rate limiter is compromised
+    } catch {
+      if (failClosed && process.env.NODE_ENV === 'production') {
         return res.status(503).json({
           error: {
             code: 'SERVICE_UNAVAILABLE',
@@ -69,32 +118,7 @@ export function createRateLimiter(options: RateLimitOptions) {
         });
       }
 
-      // Non-sensitive endpoints fallback to local memory
-      const now = Date.now();
-      const record = memoryFallbackMap.get(redisKey);
-
-      if (!record || record.resetTime < now) {
-        memoryFallbackMap.set(redisKey, {
-          count: 1,
-          resetTime: now + windowSeconds * 1000,
-        });
-        return next();
-      }
-
-      if (record.count >= maxRequests) {
-        const retryAfterSeconds = Math.ceil((record.resetTime - now) / 1000);
-        res.setHeader('Retry-After', retryAfterSeconds);
-        return res.status(429).json({
-          error: {
-            code: 'RATE_LIMIT_EXCEEDED',
-            message,
-            retryAfterSeconds,
-          },
-        });
-      }
-
-      record.count++;
-      next();
+      return executeMemoryFallback(redisKey, windowSeconds, maxRequests, message, res, next);
     }
   };
 }

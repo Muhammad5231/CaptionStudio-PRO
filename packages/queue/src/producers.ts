@@ -13,6 +13,7 @@ export function getTranscriptionQueue(): Queue<TranscriptionJobData> {
       connection: getRedisConnection(),
       defaultJobOptions: DEFAULT_JOB_OPTIONS,
     });
+    transcriptionQueue.on('error', () => {});
   }
   return transcriptionQueue;
 }
@@ -23,6 +24,7 @@ export function getThumbnailQueue(): Queue<ThumbnailJobData> {
       connection: getRedisConnection(),
       defaultJobOptions: DEFAULT_JOB_OPTIONS,
     });
+    thumbnailQueue.on('error', () => {});
   }
   return thumbnailQueue;
 }
@@ -35,6 +37,7 @@ export function getMediaAnalysisQueue(): Queue<MediaAnalysisJobData> {
       connection: getRedisConnection(),
       defaultJobOptions: DEFAULT_JOB_OPTIONS,
     });
+    mediaAnalysisQueue.on('error', () => {});
   }
   return mediaAnalysisQueue;
 }
@@ -52,6 +55,7 @@ export function getExportQueue(): Queue<ExportJobData> {
       connection: getRedisConnection(),
       defaultJobOptions: DEFAULT_JOB_OPTIONS,
     });
+    exportQueue.on('error', () => {});
   }
   return exportQueue;
 }
