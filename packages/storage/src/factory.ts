@@ -39,9 +39,10 @@ export function getStorageProvider(): IStorageProvider {
     });
   } else {
     const uploadDir = resolveUploadsPath(process.env.STORAGE_LOCAL_PATH);
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1';
     defaultStorageProvider = new LocalStorageProvider(
       uploadDir,
-      process.env.NEXT_PUBLIC_APP_URL ? `${process.env.NEXT_PUBLIC_APP_URL}/api/v1/uploads` : 'http://localhost:3000/api/v1/uploads'
+      `${apiBase}/uploads/storage`
     );
   }
 
