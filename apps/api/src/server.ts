@@ -1,12 +1,16 @@
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import path from 'node:path';
 import dotenv from 'dotenv';
+
+// Load root workspace .env first, then local API .env
+dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
+dotenv.config();
+
 import { apiV1Router, getSystemHealthState } from './routes/index';
 import { errorHandler } from './middlewares/error.middleware';
 import { checkRedisHealth } from '@captionstudio/queue';
-
-dotenv.config();
 
 function validateServerEnvironment() {
   const missing: string[] = [];

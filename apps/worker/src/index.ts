@@ -1,11 +1,16 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import dotenv from 'dotenv';
+
+// Load root workspace .env first, then local worker .env
+dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
+dotenv.config();
+
 import { getRedisConnection } from '@captionstudio/queue';
 import { createMediaAnalysisWorker } from './workers/media-analysis.worker';
 import { createTranscriptionWorker } from './workers/transcription.worker';
 import { createThumbnailWorker } from './workers/thumbnail.worker';
 import { createExportWorker } from './workers/export.worker';
-
-dotenv.config();
 
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -17,12 +22,30 @@ console.log('⚡ Starting CaptionStudio PRO Background Processing Workers...');
 // Dependency Verification
 async function verifyWorkerDependencies() {
   console.log('🔍 [Worker:Diagnostics] Verifying system binaries...');
-  const ffmpegCmd = process.env.FFMPEG_PATH ? `"${process.env.FFMPEG_PATH}"` : 'ffmpeg';
+
+  const configuredFfmpeg = process.env.FFMPEG_PATH;
+  let ffmpegCmd = 'ffmpeg';
+  if (configuredFfmpeg && fs.existsSync(configuredFfmpeg)) {
+    ffmpegCmd = `"${configuredFfmpeg}"`;
+  } else {
+    const rootExe = path.resolve(process.cwd(), '../../ffmpeg.exe');
+    const localExe = path.resolve(process.cwd(), 'ffmpeg.exe');
+    if (fs.existsSync(rootExe)) {
+      ffmpegCmd = `"${rootExe}"`;
+      process.env.FFMPEG_PATH = rootExe;
+    } else if (fs.existsSync(localExe)) {
+      ffmpegCmd = `"${localExe}"`;
+      process.env.FFMPEG_PATH = localExe;
+    } else if (configuredFfmpeg) {
+      ffmpegCmd = `"${configuredFfmpeg}"`;
+    }
+  }
+
   const pythonCmd = process.env.PYTHON_PATH ? `"${process.env.PYTHON_PATH}"` : (process.platform === 'win32' ? 'python' : 'python3');
 
   try {
     await execAsync(`${ffmpegCmd} -version`);
-    console.log('  ✅ FFmpeg is installed and accessible.');
+    console.log(`  ✅ FFmpeg is installed and accessible (${ffmpegCmd}).`);
   } catch {
     console.warn('  ⚠️ FFmpeg was not found in PATH or configured path. Media processing may fail.');
   }
