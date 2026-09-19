@@ -18,34 +18,40 @@ export interface IEmailService {
 }
 
 export class EmailService implements IEmailService {
-  private provider: IEmailProvider;
-  private defaultFrom: string;
-
-  constructor() {
+  private getProviderConfig(): { provider: IEmailProvider; defaultFrom: string } {
     const providerName = (process.env.EMAIL_PROVIDER || 'console').toLowerCase();
-    this.defaultFrom = process.env.EMAIL_FROM || 'security@captionstudio.io';
+    const defaultFrom = process.env.RESEND_FROM || process.env.EMAIL_FROM || 'CaptionStudio <onboarding@resend.dev>';
 
     if (providerName === 'resend') {
       const apiKey = process.env.RESEND_API_KEY || '';
-      const from = process.env.RESEND_FROM || this.defaultFrom;
-      this.provider = new ResendEmailProvider(apiKey, from);
+      return {
+        provider: new ResendEmailProvider(apiKey, defaultFrom),
+        defaultFrom,
+      };
     } else if (providerName === 'smtp') {
-      this.provider = new SMTPEmailProvider({
-        host: process.env.SMTP_HOST || 'localhost',
-        port: parseInt(process.env.SMTP_PORT || '587', 10),
-        secure: process.env.SMTP_SECURE === 'true',
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASSWORD,
-        defaultFrom: this.defaultFrom,
-      });
-    } else {
-      this.provider = new ConsoleEmailProvider();
+      return {
+        provider: new SMTPEmailProvider({
+          host: process.env.SMTP_HOST || 'localhost',
+          port: parseInt(process.env.SMTP_PORT || '587', 10),
+          secure: process.env.SMTP_SECURE === 'true',
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASSWORD,
+          defaultFrom,
+        }),
+        defaultFrom,
+      };
     }
+
+    return {
+      provider: new ConsoleEmailProvider(),
+      defaultFrom,
+    };
   }
 
   async sendEmail(payload: EmailPayload): Promise<{ messageId?: string }> {
-    return this.provider.sendEmail({
-      from: this.defaultFrom,
+    const { provider, defaultFrom } = this.getProviderConfig();
+    return provider.sendEmail({
+      from: defaultFrom,
       ...payload,
     });
   }
@@ -56,32 +62,29 @@ export class EmailService implements IEmailService {
       expiresInMinutes: 30,
     });
 
-    await this.provider.sendEmail({
+    await this.sendEmail({
       to,
       subject,
       html,
       text,
-      from: this.defaultFrom,
     });
   }
 
   async sendEmailVerification(to: string, verificationUrl: string): Promise<void> {
-    await this.provider.sendEmail({
+    await this.sendEmail({
       to,
       subject: 'Verify your CaptionStudio PRO account',
       html: `<p>Please verify your email by clicking <a href="${verificationUrl}">here</a>.</p>`,
       text: `Please verify your email by visiting: ${verificationUrl}`,
-      from: this.defaultFrom,
     });
   }
 
   async sendSecurityNotification(to: string, message: string): Promise<void> {
-    await this.provider.sendEmail({
+    await this.sendEmail({
       to,
       subject: 'Security Alert: CaptionStudio PRO account update',
       html: `<p>${message}</p>`,
       text: message,
-      from: this.defaultFrom,
     });
   }
 }

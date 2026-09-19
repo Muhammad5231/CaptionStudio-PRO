@@ -11,6 +11,7 @@ export class ConsoleEmailProvider implements IEmailProvider {
     );
 
     console.log(
+      `📧 [Email:Console] Dispatched to: ${maskedTo} | Subject: "${payload.subject}" | Length: ${payload.html.length} chars (No tokens or credentials logged)`
       `📧 [Email:Console] Dispatched to: ${maskedTo} | Subject: "${payload.subject}" | Length: ${payload.html.length} chars`
     );
 
